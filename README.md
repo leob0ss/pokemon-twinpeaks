@@ -20,11 +20,11 @@ Terrain types include:
 - **Earth paths** — walkable lanes with their own 9-directional ground art and corner tiles
 - **Streets & swamp streets** — two additional earth lane types with separate tile sets
 - **Water** — fills behind mountains in the upper portion of the map
-- **Walls, stairs, telescope, vehicles, log fences, ledges, rocks** — each with collision and custom rendering
+- **Walls, stairs, telescope, vehicles, log fences, ledges, rocks, path sign board, lampposts** — each with collision and custom rendering where applicable
 
 ### Overlay system
 
-Objects like **log fences**, **ledges**, and **rocks** use a separate overlay layer (`fenceOverlays`, `decorOverlays`) so they draw on top of whatever terrain is underneath without replacing it in the map grid. This mirrors how Pokémon games layer props over terrain.
+Objects like **log fences**, **ledges**, **rocks**, the **path sign board**, and **lampposts** use a separate overlay layer (`fenceOverlays`, `decorOverlays`) so they draw on top of whatever terrain is underneath without replacing it in the map grid. This mirrors how Pokémon games layer props over terrain.
 
 ### Rendering
 
@@ -33,14 +33,23 @@ A `requestAnimationFrame` loop calls `render()` each frame, which paints layers 
 2. Street / path / swamp ground tiles
 3. Mountain faces (split into underlay and main passes)
 4. Grass and flower back patches
-5. Walls, map objects (telescope, vehicles), fence overlays, decor overlays
-6. Player sprite (4-directional, 4-frame walk cycle)
-7. Grass/flower front patches (depth-sorted around the player)
-8. Grass splashes and wind gusts
+5. Walls, map objects (telescope, vehicles), fence overlays
+6. Short decor overlays (ledge, small/medium rocks, path board, etc.) — not the tall props that sort around the player
+7. Grass and flower front strips (with passes that respect the player’s tile while walking)
+8. Tall decor (big rocks, lampposts) drawn before the player when they stand south of the prop’s base
+9. Player sprite (4-directional, 4-frame walk cycle)
+10. Tall decor drawn after the player when they stand north of the prop — props and flowers keep a stable order relative to each other; only player vs tall props is dynamic
+11. Grass splashes and wind gusts
+
+**Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or tap down on the mobile shell). A circular panorama (`view/Twinpeaks_fullview.png`) opens; pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **B** / **×** closes it.
+
+**Path sign:** the board blocks that tile. Stand directly below it, face **up**, press **↑** for a Pokémon-style text box. **Space / Enter / Z / X**, tap the box, or **A** / **B** on the GBA shell advances and closes.
+
+Wind ambience is **position-based**: stronger layered wind when the player is north of the summit threshold (see `WIND_NORMAL_MIN_TILE_Y` in `index.html`). In `?devMap`, a small HUD shows wind mode and row.
 
 ### Movement & collision
 
-Arrow keys move the player tile-by-tile with smooth interpolation. Shift toggles running (faster step speed). Collision checks block movement into walls, mountains (unless the brown face is walkable), fences, ledge/rock overlays, and map-edge boundaries.
+Arrow keys move the player tile-by-tile with smooth interpolation. Shift toggles running (faster step speed). Collision checks block movement into walls, mountains (unless the brown face is walkable), fences, solid decor overlays (ledge, rocks, board, lamppost, etc.), and map-edge boundaries.
 
 ### Sprites & assets
 
@@ -60,41 +69,47 @@ mountain/             Mountain face PNGs + corner PNGs
 fence/                Log fence PNGs (7 variants)
 ledge/                Ledge PNG
 rocks/                Rock PNGs (small, medium, big)
+objects/              Telescope SVG, path board PNG, lamppost PNG
+view/                 Telescope panorama PNG (full skyline)
 stair/                Stairs PNG
-objects/              Telescope SVG
 vehicles/             Vehicle PNGs (bicycles, truck)
 water/                Water tile PNG
 wind/                 Wind gust SVGs (small, medium, large)
+sounds/               Footstep and wind ambience audio
 reference_map/        Design reference files
 map_saves/            Older published-map.json backups (V1–V4)
 ```
 
 ## Running locally
 
-Open `index.html` directly in a browser, or serve it with any static server:
+Serve the repo root with a static file server (`file://` can block fetches for map/audio):
 
 ```bash
 python3 -m http.server 5173
 ```
 
-Then visit [http://localhost:5173](http://localhost:5173).
+Then open [http://localhost:5173](http://localhost:5173) (add `?devMap` for the editor).
 
 ### Controls
 
 | Key | Action |
 |-----|--------|
-| Arrow keys | Move |
+| Arrow keys | Move; when eligible, **↓** opens the telescope view, **↑** reads the path sign |
 | Shift (hold) | Run |
+| Esc | Close telescope view |
+| Space / Enter / Z / X | Advance or close the sign text box when it is open |
+
+On narrow / touch screens, a **GBA-style shell** appears: D-pad maps to arrows, **A** / **B** can interact with overlays (telescope close, message box).
 
 ## Map editor
 
 Append `?devMap` to the URL to enable the built-in map editor:
 
 ```
-http://localhost:5173?devMap
+http://localhost:5173/?devMap
 ```
 
-This shows a toolbar with a **Cell** dropdown, **Angle** selector, **Undo**, and **Export** button. Shift+click paints tiles; Ctrl/Cmd+click selects regions for copy/paste. Edits are saved to `localStorage` automatically.
+This shows a toolbar with a **Cell** dropdown, **Angle** selector, **Undo**, and **Export** button. Shift+click paints tiles (including **Terrain → Flowers**, **Objects → Board / Lamppost**, etc.); Ctrl/Cmd+click selects regions for copy/paste. Edits are saved to `localStorage` automatically.
 
 Use **Export map** to download a `published-map.json` that you can commit to the repo — that file is what visitors see when the site is deployed.
 

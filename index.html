@@ -4,6 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Twin Peaks — Prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
     <style>
       html,
       body {
@@ -216,10 +219,340 @@
         border-radius: 1px;
         background: rgba(0,0,0,0.15);
       }
+
+      /* ── Telescope skyline view ── */
+      #telescope-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(4, 6, 14, 0.94);
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.28s ease, visibility 0.28s;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      #telescope-overlay.telescope-overlay--hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .telescope-stage {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      .telescope-ring {
+        position: relative;
+        width: min(78vmin, 440px);
+        height: min(78vmin, 440px);
+        border-radius: 50%;
+        padding: 12px;
+        background: linear-gradient(155deg, #6d5a45 0%, #2e2418 42%, #544433 100%);
+        box-shadow:
+          0 0 0 3px #14100a,
+          0 16px 56px rgba(0, 0, 0, 0.65),
+          inset 0 2px 5px rgba(255, 255, 255, 0.12);
+      }
+      .telescope-viewport {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        overflow: hidden;
+        position: relative;
+        background: #060a14;
+        box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.85);
+        touch-action: none;
+        cursor: grab;
+      }
+      .telescope-viewport.telescope-viewport--dragging {
+        cursor: grabbing;
+      }
+      .telescope-viewport::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        box-shadow: inset 0 0 28px 8px rgba(0, 0, 0, 0.55);
+        pointer-events: none;
+        z-index: 2;
+      }
+      #telescope-panorama-wrap {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        will-change: transform;
+      }
+      #telescope-panorama-wrap img {
+        height: 100%;
+        width: auto;
+        display: block;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+      .telescope-edge {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 24%;
+        z-index: 3;
+        cursor: ew-resize;
+      }
+      .telescope-edge-left {
+        left: 0;
+        border-radius: 50% 0 0 50%;
+      }
+      .telescope-edge-right {
+        right: 0;
+        border-radius: 0 50% 50% 0;
+      }
+      .telescope-edge:hover {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent);
+      }
+      .telescope-edge-right:hover {
+        background: linear-gradient(270deg, rgba(255, 255, 255, 0.08), transparent);
+      }
+      .telescope-edge.telescope-edge--active {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.14), transparent);
+      }
+      .telescope-edge-right.telescope-edge--active {
+        background: linear-gradient(270deg, rgba(255, 255, 255, 0.14), transparent);
+      }
+      .telescope-edge-label {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.35);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .telescope-edge-left .telescope-edge-label {
+        left: 14%;
+      }
+      .telescope-edge-right .telescope-edge-label {
+        right: 14%;
+      }
+      .telescope-edge:hover .telescope-edge-label,
+      .telescope-edge.telescope-edge--active .telescope-edge-label {
+        opacity: 0.85;
+      }
+      .telescope-close {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        z-index: 4;
+        width: 34px;
+        height: 34px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-radius: 50%;
+        background: rgba(20, 18, 28, 0.9);
+        color: #fff;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0;
+      }
+      .telescope-close:hover {
+        background: rgba(40, 36, 52, 0.95);
+      }
+      .telescope-caption {
+        margin: 0;
+        max-width: min(92vw, 440px);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: rgba(255, 255, 255, 0.55);
+        text-align: center;
+        line-height: 1.45;
+      }
+      .telescope-caption-touch {
+        display: none;
+      }
+      .telescope-mobile-pan {
+        display: none;
+        gap: 12px;
+        width: min(92vw, 440px);
+      }
+      .telescope-pan-btn {
+        flex: 1;
+        min-height: 48px;
+        padding: 10px 14px;
+        border: 2px solid rgba(255, 255, 255, 0.28);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .telescope-pan-btn:active,
+      .telescope-pan-btn.telescope-pan-btn--active {
+        background: rgba(255, 255, 255, 0.22);
+        border-color: rgba(255, 255, 255, 0.45);
+      }
+
+      @media (pointer: coarse) {
+        #telescope-overlay {
+          align-items: flex-start;
+          padding: max(10px, env(safe-area-inset-top)) 12px calc(52vh + env(safe-area-inset-bottom)) 12px;
+        }
+        .telescope-ring {
+          width: min(62vmin, 340px);
+          height: min(62vmin, 340px);
+        }
+        .telescope-edge {
+          width: 30%;
+        }
+        .telescope-edge-label {
+          opacity: 0.8;
+          font-size: 28px;
+        }
+        .telescope-close {
+          width: 48px;
+          height: 48px;
+          font-size: 26px;
+          top: -6px;
+          right: -6px;
+        }
+        .telescope-caption-mouse {
+          display: none;
+        }
+        .telescope-caption-touch {
+          display: inline;
+        }
+        .telescope-mobile-pan {
+          display: flex;
+        }
+      }
+
+      /* ── Pokémon-style text box ── */
+      #message-box-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10001;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 0 10px 14px;
+        box-sizing: border-box;
+        pointer-events: auto;
+        touch-action: manipulation;
+      }
+      #message-box-overlay.message-box--hidden {
+        display: none;
+        pointer-events: none;
+      }
+      .msgbox-frame {
+        width: min(100%, 720px);
+        padding: 5px;
+        background: #383850;
+        border-radius: 6px;
+        box-shadow:
+          0 0 0 3px #101020,
+          inset 0 0 0 2px #585878,
+          0 10px 28px rgba(0, 0, 0, 0.45);
+      }
+      .msgbox-inner {
+        position: relative;
+        background: #f8f8f8;
+        border: 3px solid #484858;
+        border-radius: 4px;
+        padding: 18px 22px 30px;
+        min-height: 88px;
+        box-shadow: inset 0 2px 0 #fff, inset 0 -2px 0 #d0d0d8;
+      }
+      .msgbox-text {
+        margin: 0;
+        font-family: "Press Start 2P", "Courier New", monospace;
+        font-size: 11px;
+        line-height: 1.85;
+        color: #202028;
+        letter-spacing: 0.02em;
+        word-wrap: break-word;
+      }
+      .msgbox-arrow {
+        position: absolute;
+        right: 14px;
+        bottom: 10px;
+        font-family: "Press Start 2P", monospace;
+        font-size: 10px;
+        line-height: 1;
+        color: #383850;
+        display: none;
+      }
+      .msgbox-arrow.msgbox-arrow--visible {
+        display: block;
+        animation: msgbox-blink 0.55s step-end infinite;
+      }
+      @keyframes msgbox-blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      @media (pointer: coarse) {
+        #message-box-overlay {
+          padding-bottom: calc(52vh + 14px);
+        }
+        .msgbox-text {
+          font-size: 10px;
+          line-height: 1.9;
+        }
+      }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
+    <div id="telescope-overlay" class="telescope-overlay--hidden" aria-hidden="true">
+      <div class="telescope-stage">
+        <div class="telescope-ring">
+          <div class="telescope-viewport" id="telescope-viewport">
+            <div id="telescope-panorama-wrap">
+              <img src="view/Twinpeaks_fullview.png" alt="San Francisco skyline from Twin Peaks" draggable="false" />
+            </div>
+            <div class="telescope-edge telescope-edge-left" id="telescope-edge-left" aria-label="Pan left">
+              <span class="telescope-edge-label">‹</span>
+            </div>
+            <div class="telescope-edge telescope-edge-right" id="telescope-edge-right" aria-label="Pan right">
+              <span class="telescope-edge-label">›</span>
+            </div>
+          </div>
+          <button type="button" class="telescope-close" id="telescope-close" title="Close" aria-label="Close telescope view">×</button>
+        </div>
+        <div class="telescope-mobile-pan">
+          <button type="button" class="telescope-pan-btn" id="telescope-pan-btn-left" aria-label="Pan left">‹ Left</button>
+          <button type="button" class="telescope-pan-btn" id="telescope-pan-btn-right" aria-label="Pan right">Right ›</button>
+        </div>
+        <p class="telescope-caption">
+          <span class="telescope-caption-mouse">Hover the left or right edge to pan · Esc to close</span>
+          <span class="telescope-caption-touch">Swipe the view or hold Left / Right · Tap × or B to close</span>
+        </p>
+      </div>
+    </div>
+    <div id="message-box-overlay" class="message-box--hidden" aria-hidden="true" role="dialog" aria-live="polite">
+      <div class="msgbox-frame">
+        <div class="msgbox-inner">
+          <p class="msgbox-text" id="message-box-text"></p>
+          <span class="msgbox-arrow" id="message-box-arrow" aria-hidden="true">▼</span>
+        </div>
+      </div>
+    </div>
     <div id="gba-shell">
       <div class="gba-screen-area">
         <div class="gba-screen-bezel" id="gba-bezel"></div>
@@ -542,6 +875,30 @@
       resize();
 
       window.addEventListener("keydown", (e) => {
+        if (messageBoxOpen) {
+          if (e.key === "Escape" || isMessageBoxAdvanceKey(e.key)) {
+            e.preventDefault();
+            advanceMessageBox();
+          }
+          return;
+        }
+        if (telescopeViewOpen) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeTelescopeView();
+          }
+          return;
+        }
+        if (e.key === "ArrowUp" && playerCanReadBoardSign()) {
+          e.preventDefault();
+          openMessageBox(BOARD_SIGN_MESSAGE);
+          return;
+        }
+        if (e.key === "ArrowDown" && playerCanUseTelescope()) {
+          e.preventDefault();
+          openTelescopeView();
+          return;
+        }
         if (e.key.startsWith("Arrow")) e.preventDefault();
         switch (e.key) {
           case "ArrowUp":
@@ -753,6 +1110,10 @@
       const T_ROCK_SMALL = 114;
       const T_ROCK_MEDIUM = 115;
       const T_ROCK_BIG = 116;
+      /** Path sign board (`objects/board.png`); drawn on `decorOverlays` over earth/path. */
+      const T_BOARD = 117;
+      /** Street lamppost (`objects/Lamppost.png`); tall decor with Pokémon-style depth vs player. */
+      const T_LAMPPOST = 118;
 
       const VEHICLE_PNG_PATHS = {
         [T_VEHICLE_BICYCLE_LEFT]: "vehicles/Property 1=Bicycle Left.png",
@@ -776,11 +1137,27 @@
         [T_ROCK_MEDIUM]: "rocks/medium.png",
         [T_ROCK_BIG]: "rocks/big.png",
       };
+      const BOARD_PNG_PATHS = {
+        [T_BOARD]: "objects/board.png",
+      };
+      const LAMPPOST_PNG_PATHS = {
+        [T_LAMPPOST]: "objects/Lamppost.png",
+      };
       const OVERLAY_PNG_PATHS = { ...VEHICLE_PNG_PATHS, ...FENCE_LOG_PNG_PATHS, ...LEDGE_PNG_PATHS, ...ROCKS_PNG_PATHS };
 
       /** Ledge + rocks: sit on top of whatever is drawn behind them; never assign earth lanes or lane art. */
       function isTerrainBareOverlayCell(c) {
         return c === T_LEDGE || ROCKS_PNG_PATHS[c] !== undefined;
+      }
+
+      /** Props on `decorOverlays` (bare terrain overlays + path objects). */
+      function isDecorOverlayCell(c) {
+        return isTerrainBareOverlayCell(c) || c === T_BOARD || c === T_LAMPPOST;
+      }
+
+      /** Tall decor split before/after Red by feet vs tile base (big rock, lamppost). */
+      function isTallDecorOverlay(dv) {
+        return dv === T_ROCK_BIG || dv === T_LAMPPOST;
       }
 
       function isFenceVariantId(v) {
@@ -1379,6 +1756,31 @@
         return "center";
       }
 
+      const BOARD_PATH_SIGN_TILE = { tx: 3, ty: 99 };
+      const BOARD_SIGN_READ_TILE = { tx: 3, ty: 100 };
+      const BOARD_SIGN_MESSAGE =
+        "Welcome to Twin Peaks, the best view point in San Francisco. This is a project of LEO.";
+
+      function ensureBoardPathSignPlaced() {
+        const { tx, ty } = BOARD_PATH_SIGN_TILE;
+        if (!tileInWorldBounds(tx, ty)) return;
+        decorOverlays[`${tx},${ty}`] = T_BOARD;
+      }
+
+      const LAMPPOST_TILES = [
+        { tx: -12, ty: 102 },
+        { tx: -2, ty: 102 },
+        { tx: 8, ty: 102 },
+        { tx: 18, ty: 102 },
+      ];
+
+      function ensureLamppostsPlaced() {
+        for (const { tx, ty } of LAMPPOST_TILES) {
+          if (!tileInWorldBounds(tx, ty)) continue;
+          decorOverlays[`${tx},${ty}`] = T_LAMPPOST;
+        }
+      }
+
       function replaceEditBundleIntoGlobals(bundle) {
         function clearThenAssign(target, src) {
           for (const k of Object.keys(target)) delete target[k];
@@ -1392,6 +1794,8 @@
         clearThenAssign(pathArt, bundle.path);
         clearThenAssign(fenceOverlays, bundle.fence);
         clearThenAssign(decorOverlays, bundle.decor);
+        ensureBoardPathSignPlaced();
+        ensureLamppostsPlaced();
       }
 
       const MAP_UNDO_DEPTH = 10;
@@ -1571,7 +1975,7 @@
           mapEdits[dk] = snap.cell;
         } else {
           mapEdits[dk] = mapEditStored;
-          if (typeof snap.decorVariant === "number" && isTerrainBareOverlayCell(snap.decorVariant)) decorOverlays[dk] = snap.decorVariant;
+          if (typeof snap.decorVariant === "number" && isDecorOverlayCell(snap.decorVariant)) decorOverlays[dk] = snap.decorVariant;
           else delete decorOverlays[dk];
         }
         if (typeof snap.mtn === "string" && snap.mtn) mountainEdits[dk] = snap.mtn;
@@ -1647,7 +2051,7 @@
           if (isFenceVariantId(v)) {
             fenceOverlays[k] = v;
             delete mapEdits[k];
-          } else if (isTerrainBareOverlayCell(v)) {
+          } else if (isDecorOverlayCell(v)) {
             decorOverlays[k] = v;
             delete mapEdits[k];
           }
@@ -1781,7 +2185,7 @@
             continue;
           }
           const dv = decorOverlays[k];
-          if (!isTerrainBareOverlayCell(dv)) delete decorOverlays[k];
+          if (!isDecorOverlayCell(dv)) delete decorOverlays[k];
         }
       }
 
@@ -1795,6 +2199,317 @@
       function cellAtTile(tx, ty) {
         if (!tileInWorldBounds(tx, ty)) return T_WALL;
         return map[ty][tx - MAP_X_MIN];
+      }
+
+      let telescopeViewOpen = false;
+      let telescopeScrollX = 0;
+      let telescopePanDir = 0;
+      let telescopePanoramaWidth = 0;
+      let telescopePanoramaMaxScroll = 0;
+      let telescopeDragPointerId = null;
+      let telescopeDragStartClientX = 0;
+      let telescopeDragStartScrollX = 0;
+      let telescopeBodyOverflowBefore = "";
+      const TELESCOPE_PAN_SPEED_PX = 300;
+      const telescopeOverlayEl = document.getElementById("telescope-overlay");
+      const telescopeViewportEl = document.getElementById("telescope-viewport");
+      const telescopePanoramaWrapEl = document.getElementById("telescope-panorama-wrap");
+      const telescopePanoramaImgEl = telescopePanoramaWrapEl
+        ? telescopePanoramaWrapEl.querySelector("img")
+        : null;
+
+      function playerCanUseTelescope() {
+        if (telescopeViewOpen || !map) return false;
+        if (player.moveT < 1) return false;
+        if (player.dir !== "down") return false;
+        return cellAtTile(player.tileX, player.tileY + 1) === T_TELESCOPE;
+      }
+
+      function layoutTelescopePanorama() {
+        if (!telescopeViewportEl || !telescopePanoramaWrapEl || !telescopePanoramaImgEl) return;
+        const nh = telescopePanoramaImgEl.naturalHeight;
+        const nw = telescopePanoramaImgEl.naturalWidth;
+        if (!nh || !nw) return;
+        const vSize = telescopeViewportEl.clientWidth;
+        const scale = vSize / nh;
+        telescopePanoramaWidth = nw * scale;
+        telescopePanoramaWrapEl.style.width = `${telescopePanoramaWidth}px`;
+        telescopePanoramaMaxScroll = Math.max(0, telescopePanoramaWidth - vSize);
+        telescopeScrollX = clamp(telescopeScrollX, 0, telescopePanoramaMaxScroll);
+        applyTelescopeScroll();
+      }
+
+      function applyTelescopeScroll() {
+        if (telescopePanoramaWrapEl) {
+          telescopePanoramaWrapEl.style.transform = `translateX(${-telescopeScrollX}px)`;
+        }
+      }
+
+      function updateTelescopePan(dt) {
+        if (!telescopeViewOpen) return;
+        if (telescopePanDir !== 0) {
+          telescopeScrollX = clamp(
+            telescopeScrollX + telescopePanDir * TELESCOPE_PAN_SPEED_PX * dt,
+            0,
+            telescopePanoramaMaxScroll,
+          );
+          applyTelescopeScroll();
+        }
+      }
+
+      function clearTelescopePanHoldState() {
+        telescopePanDir = 0;
+        document.getElementById("telescope-edge-left")?.classList.remove("telescope-edge--active");
+        document.getElementById("telescope-edge-right")?.classList.remove("telescope-edge--active");
+        document.getElementById("telescope-pan-btn-left")?.classList.remove("telescope-pan-btn--active");
+        document.getElementById("telescope-pan-btn-right")?.classList.remove("telescope-pan-btn--active");
+      }
+
+      function clearTelescopePanUiActive() {
+        clearTelescopePanHoldState();
+        telescopeViewportEl?.classList.remove("telescope-viewport--dragging");
+        telescopeDragPointerId = null;
+      }
+
+      function openTelescopeView() {
+        if (!telescopeOverlayEl || telescopeViewOpen) return;
+        telescopeViewOpen = true;
+        telescopeBodyOverflowBefore = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        telescopeOverlayEl.classList.remove("telescope-overlay--hidden");
+        telescopeOverlayEl.setAttribute("aria-hidden", "false");
+        layoutTelescopePanorama();
+        if (telescopePanoramaMaxScroll > 0) {
+          telescopeScrollX = telescopePanoramaMaxScroll * 0.38;
+          applyTelescopeScroll();
+        }
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function closeTelescopeView() {
+        if (!telescopeOverlayEl || !telescopeViewOpen) return;
+        telescopeViewOpen = false;
+        clearTelescopePanUiActive();
+        document.body.style.overflow = telescopeBodyOverflowBefore;
+        telescopeOverlayEl.classList.add("telescope-overlay--hidden");
+        telescopeOverlayEl.setAttribute("aria-hidden", "true");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      let messageBoxOpen = false;
+      let messageBoxFullText = "";
+      let messageBoxVisibleChars = 0;
+      let messageBoxCharTimer = 0;
+      let messageBoxTypingDone = false;
+      const MESSAGE_BOX_CHARS_PER_SEC = 42;
+      const messageBoxOverlayEl = document.getElementById("message-box-overlay");
+      const messageBoxTextEl = document.getElementById("message-box-text");
+      const messageBoxArrowEl = document.getElementById("message-box-arrow");
+
+      function playerCanReadBoardSign() {
+        if (messageBoxOpen || telescopeViewOpen || !map) return false;
+        if (player.moveT < 1) return false;
+        if (player.dir !== "up") return false;
+        const { tx, ty } = BOARD_SIGN_READ_TILE;
+        if (player.tileX !== tx || player.tileY !== ty) return false;
+        const { tx: bx, ty: by } = BOARD_PATH_SIGN_TILE;
+        return decorOverlays[`${bx},${by}`] === T_BOARD;
+      }
+
+      function openMessageBox(text) {
+        if (!messageBoxOverlayEl || messageBoxOpen) return;
+        messageBoxOpen = true;
+        messageBoxFullText = text;
+        messageBoxVisibleChars = 0;
+        messageBoxCharTimer = 0;
+        messageBoxTypingDone = false;
+        messageBoxOverlayEl.classList.remove("message-box--hidden");
+        messageBoxOverlayEl.setAttribute("aria-hidden", "false");
+        if (messageBoxTextEl) messageBoxTextEl.textContent = "";
+        messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function closeMessageBox() {
+        if (!messageBoxOverlayEl || !messageBoxOpen) return;
+        messageBoxOpen = false;
+        messageBoxOverlayEl.classList.add("message-box--hidden");
+        messageBoxOverlayEl.setAttribute("aria-hidden", "true");
+        messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function advanceMessageBox() {
+        if (!messageBoxOpen) return;
+        if (!messageBoxTypingDone) {
+          messageBoxVisibleChars = messageBoxFullText.length;
+          messageBoxTypingDone = true;
+          if (messageBoxTextEl) messageBoxTextEl.textContent = messageBoxFullText;
+          messageBoxArrowEl?.classList.add("msgbox-arrow--visible");
+          return;
+        }
+        closeMessageBox();
+      }
+
+      function updateMessageBox(dt) {
+        if (!messageBoxOpen || messageBoxTypingDone) return;
+        messageBoxCharTimer += dt;
+        const charsToShow = Math.min(
+          messageBoxFullText.length,
+          Math.floor(messageBoxCharTimer * MESSAGE_BOX_CHARS_PER_SEC),
+        );
+        if (charsToShow > messageBoxVisibleChars) {
+          messageBoxVisibleChars = charsToShow;
+          if (messageBoxTextEl) {
+            messageBoxTextEl.textContent = messageBoxFullText.slice(0, messageBoxVisibleChars);
+          }
+        }
+        if (messageBoxVisibleChars >= messageBoxFullText.length) {
+          messageBoxTypingDone = true;
+          messageBoxArrowEl?.classList.add("msgbox-arrow--visible");
+        }
+      }
+
+      function isMessageBoxAdvanceKey(key) {
+        return key === " " || key === "Enter" || key === "z" || key === "Z" || key === "x" || key === "X";
+      }
+
+      function initMessageBox() {
+        if (!messageBoxOverlayEl) return;
+        messageBoxOverlayEl.addEventListener("click", () => advanceMessageBox());
+        messageBoxOverlayEl.addEventListener(
+          "pointerdown",
+          (e) => {
+            if (!messageBoxOpen) return;
+            e.preventDefault();
+            advanceMessageBox();
+          },
+          { passive: false },
+        );
+        const gbaBtnA = document.querySelector(".gba-btn-a");
+        const gbaBtnB = document.querySelector(".gba-btn-b");
+        const bindGbaDismiss = (el) => {
+          if (!el) return;
+          el.addEventListener(
+            "touchstart",
+            (e) => {
+              if (!messageBoxOpen) return;
+              e.preventDefault();
+              e.stopPropagation();
+              advanceMessageBox();
+            },
+            { passive: false },
+          );
+          el.addEventListener("click", (e) => {
+            if (!messageBoxOpen) return;
+            e.preventDefault();
+            e.stopPropagation();
+            advanceMessageBox();
+          });
+        };
+        bindGbaDismiss(gbaBtnA);
+        bindGbaDismiss(gbaBtnB);
+      }
+
+      function initTelescopeView() {
+        if (!telescopeOverlayEl) return;
+        const closeBtn = document.getElementById("telescope-close");
+        const edgeLeft = document.getElementById("telescope-edge-left");
+        const edgeRight = document.getElementById("telescope-edge-right");
+        const panBtnLeft = document.getElementById("telescope-pan-btn-left");
+        const panBtnRight = document.getElementById("telescope-pan-btn-right");
+        const gbaBtnB = document.querySelector(".gba-btn-b");
+
+        closeBtn?.addEventListener("click", () => closeTelescopeView());
+
+        gbaBtnB?.addEventListener(
+          "touchstart",
+          (e) => {
+            if (!telescopeViewOpen) return;
+            e.preventDefault();
+            e.stopPropagation();
+            closeTelescopeView();
+          },
+          { passive: false },
+        );
+        gbaBtnB?.addEventListener("click", (e) => {
+          if (!telescopeViewOpen) return;
+          e.preventDefault();
+          e.stopPropagation();
+          closeTelescopeView();
+        });
+
+        function bindPanControl(el, dir, activeClass) {
+          if (!el) return;
+          const start = (e) => {
+            if (e?.pointerType === "mouse" && e.button !== 0) return;
+            if (e?.cancelable) e.preventDefault();
+            telescopePanDir = dir;
+            el.classList.add(activeClass);
+          };
+          const stop = () => {
+            if (telescopePanDir === dir) telescopePanDir = 0;
+            el.classList.remove(activeClass);
+          };
+          el.addEventListener("mouseenter", start);
+          el.addEventListener("mouseleave", stop);
+          el.addEventListener("pointerdown", start);
+          el.addEventListener("pointerup", stop);
+          el.addEventListener("pointercancel", stop);
+          el.addEventListener("pointerleave", stop);
+        }
+        function bindPanEdge(el, dir) {
+          bindPanControl(el, dir, "telescope-edge--active");
+        }
+        bindPanEdge(edgeLeft, -1);
+        bindPanEdge(edgeRight, 1);
+        bindPanControl(panBtnLeft, -1, "telescope-pan-btn--active");
+        bindPanControl(panBtnRight, 1, "telescope-pan-btn--active");
+
+        if (telescopeViewportEl) {
+          telescopeViewportEl.addEventListener("pointerdown", (e) => {
+            if (!telescopeViewOpen) return;
+            if (e.pointerType === "mouse" && e.button !== 0) return;
+            if (e.target.closest(".telescope-edge, .telescope-close")) return;
+            telescopeDragPointerId = e.pointerId;
+            telescopeDragStartClientX = e.clientX;
+            telescopeDragStartScrollX = telescopeScrollX;
+            clearTelescopePanHoldState();
+            telescopeViewportEl.classList.add("telescope-viewport--dragging");
+            telescopeViewportEl.setPointerCapture(e.pointerId);
+            e.preventDefault();
+          });
+          telescopeViewportEl.addEventListener("pointermove", (e) => {
+            if (e.pointerId !== telescopeDragPointerId) return;
+            const dx = telescopeDragStartClientX - e.clientX;
+            telescopeScrollX = clamp(telescopeDragStartScrollX + dx, 0, telescopePanoramaMaxScroll);
+            applyTelescopeScroll();
+          });
+          const endDrag = (e) => {
+            if (e.pointerId !== telescopeDragPointerId) return;
+            telescopeDragPointerId = null;
+            telescopeViewportEl.classList.remove("telescope-viewport--dragging");
+            try {
+              telescopeViewportEl.releasePointerCapture(e.pointerId);
+            } catch {
+              /* already released */
+            }
+          };
+          telescopeViewportEl.addEventListener("pointerup", endDrag);
+          telescopeViewportEl.addEventListener("pointercancel", endDrag);
+        }
+
+        if (telescopePanoramaImgEl) {
+          if (telescopePanoramaImgEl.complete) layoutTelescopePanorama();
+          telescopePanoramaImgEl.addEventListener("load", layoutTelescopePanorama);
+        }
+        window.addEventListener("resize", () => {
+          if (telescopeViewOpen) layoutTelescopePanorama();
+        });
       }
 
       function findPlayerStart() {
@@ -1933,11 +2648,13 @@
           objectTelescope.loaded = false;
         });
 
+      const ALL_OVERLAY_BITMAP_PATHS = { ...OVERLAY_PNG_PATHS, ...BOARD_PNG_PATHS, ...LAMPPOST_PNG_PATHS };
       const overlayBitmapImages = {};
-      for (const tid of Object.keys(OVERLAY_PNG_PATHS)) {
+      for (const tid of Object.keys(ALL_OVERLAY_BITMAP_PATHS)) {
         const id = Number(tid);
+        const src = ALL_OVERLAY_BITMAP_PATHS[id];
         overlayBitmapImages[id] = { loaded: false, img: null };
-        loadImage(encodeURI(OVERLAY_PNG_PATHS[tid]))
+        loadImage(encodeURI(src))
           .then((img) => {
             overlayBitmapImages[id].img = img;
             overlayBitmapImages[id].loaded = true;
@@ -2427,7 +3144,7 @@
         const c = cellAtTile(tx, ty);
         const k = `${tx},${ty}`;
         if (fenceOverlays[k] != null && isFenceVariantId(fenceOverlays[k])) return true;
-        if (decorOverlays[k] != null && isTerrainBareOverlayCell(decorOverlays[k])) return true;
+        if (decorOverlays[k] != null && isDecorOverlayCell(decorOverlays[k])) return true;
         if (c === T_WALL || isMapCellOverlayObject(c)) return true;
         if (c !== T_MOUNTAIN) return false;
         return mountainBrownFaceKeyForCollision(tx, ty) !== "center";
@@ -2822,7 +3539,7 @@
           if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
           if (tx < tx0 || tx > tx1 || ty < ty0 || ty > ty1) continue;
           const dv = decorOverlays[k];
-          if (!isTerrainBareOverlayCell(dv)) continue;
+          if (!isDecorOverlayCell(dv)) continue;
           if (shouldDraw && !shouldDraw(tx, ty, dv)) continue;
           const slot = overlayBitmapImages[dv];
           if (!slot || !slot.loaded || !slot.img) continue;
@@ -2840,12 +3557,22 @@
       }
 
       function decorOverlayDrawBeforePlayer(tx, ty, dv) {
-        if (dv === T_ROCK_BIG && bigRockDrawsInFrontOfPlayer(ty)) return false;
+        if (isTallDecorOverlay(dv) && bigRockDrawsInFrontOfPlayer(ty)) return false;
         return true;
       }
 
       function decorOverlayDrawAfterPlayer(tx, ty, dv) {
-        return dv === T_ROCK_BIG && bigRockDrawsInFrontOfPlayer(ty);
+        return isTallDecorOverlay(dv) && bigRockDrawsInFrontOfPlayer(ty);
+      }
+
+      /** Ledge / board / small & medium rocks — not split around the player. */
+      function decorOverlayDrawAllExceptBigRock(tx, ty, dv) {
+        return !isTallDecorOverlay(dv);
+      }
+
+      /** Tall decor in the “before Red” pass (player south of base). Drawn after grass/flowers so flora z-order does not flip when Red moves. */
+      function decorBigRockBeforePlayerOnly(tx, ty, dv) {
+        return isTallDecorOverlay(dv) && decorOverlayDrawBeforePlayer(tx, ty, dv);
       }
 
       /** Bottom-of-path signpost (sketch). */
@@ -3273,6 +4000,15 @@
       }
 
       function step(dt) {
+        if (telescopeViewOpen) {
+          updateTelescopePan(dt);
+          return;
+        }
+        if (messageBoxOpen) {
+          updateMessageBox(dt);
+          return;
+        }
+
         const prevMoveT = player.moveT;
 
         syncWindModeFromPlayer();
@@ -3332,6 +4068,13 @@
 
         // Start a new tile-step if idle and any direction is pressed.
         if (!isMoving) {
+          if (input.up && playerCanReadBoardSign()) {
+            openMessageBox(BOARD_SIGN_MESSAGE);
+            input.up = false;
+          } else if (input.down && playerCanUseTelescope()) {
+            openTelescopeView();
+            input.down = false;
+          } else {
           let dir = null;
           if (input.left) dir = "left";
           else if (input.right) dir = "right";
@@ -3366,6 +4109,7 @@
             } else {
               player.dir = dir;
             }
+          }
           }
         }
 
@@ -3483,7 +4227,7 @@
         drawWallTiles(camX, camY, viewW, viewH);
         drawMapObjectTiles(camX, camY, viewW, viewH);
         drawFenceOverlayTiles(camX, camY, viewW, viewH);
-        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawBeforePlayer);
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAllExceptBigRock);
 
         const selDraw = editorSelectDrag
           ? normalizeEditorSelect(editorSelectDrag)
@@ -3531,6 +4275,8 @@
 
         if (inFlower) drawFlowerFrontPatchExcept(camX, camY, viewW, viewH, tcy, tcx);
         else drawFlowerFrontPatchAll(camX, camY, viewW, viewH);
+
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorBigRockBeforePlayerOnly);
 
         drawPlayer(screenX, screenY);
         drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAfterPlayer);
@@ -3638,7 +4384,7 @@
             continue;
           }
           const dv = decorOverlays[dk];
-          if (!isTerrainBareOverlayCell(dv)) delete decorOverlays[dk];
+          if (!isDecorOverlayCell(dv)) delete decorOverlays[dk];
         }
         applyStartupMapEditLayers();
 
@@ -3675,6 +4421,7 @@
           options: [
             ["Nothing (background)", T_VOID],
             ["Grass", T_GRASS],
+            ["Flowers", T_FLOWER],
             ["Wall", T_WALL],
             ["Mountain", T_MOUNTAIN],
             ["Stairs", T_STAIRS],
@@ -3691,6 +4438,8 @@
             ["Rock — small", T_ROCK_SMALL],
             ["Rock — medium", T_ROCK_MEDIUM],
             ["Rock — big", T_ROCK_BIG],
+            ["Board (path sign)", T_BOARD],
+            ["Lamppost", T_LAMPPOST],
           ],
           children: [
             {
@@ -3894,7 +4643,7 @@
           persistPaintEdits();
           return;
         }
-        if (isTerrainBareOverlayCell(cell)) {
+        if (isDecorOverlayCell(cell)) {
           decorOverlays[k] = cell;
           persistPaintEdits();
           return;
@@ -4095,6 +4844,8 @@
       requestAnimationFrame(loop);
       }
 
+      initTelescopeView();
+      initMessageBox();
       bootTwinPeaks().catch((err) => console.error(err));
     </script>
   </body>
