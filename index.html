@@ -22,10 +22,245 @@
         display: block;
         image-rendering: pixelated;
       }
+
+      /* ── GBA-style mobile shell ── */
+      #gba-shell {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        flex-direction: column;
+        background: #8b6fae;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      @media (pointer: coarse) {
+        #gba-shell { display: flex; }
+        canvas {
+          position: relative !important;
+          width: 100% !important;
+          height: auto !important;
+          flex: 0 0 auto;
+        }
+      }
+
+      /* Screen bezel */
+      .gba-screen-area {
+        flex: 1 1 0;
+        min-height: 0;
+        background: #4a3568;
+        padding: 10px 12px 6px;
+        border-bottom: 3px solid #6b4f8a;
+        display: flex;
+        flex-direction: column;
+      }
+      .gba-screen-bezel {
+        background: #1a1a2e;
+        border-radius: 6px;
+        padding: 4px;
+        box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+      }
+      .gba-screen-bezel canvas {
+        border-radius: 3px;
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      .gba-power-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #4ce44c;
+        box-shadow: 0 0 6px #4ce44c;
+        margin: 4px 0 0 8px;
+      }
+
+      /* Controls area */
+      .gba-controls {
+        flex: 0 0 50vh;
+        background: #8b6fae;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        position: relative;
+      }
+
+      /* D-pad: GBA-style cross */
+      .dpad-wrap {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        flex-shrink: 0;
+      }
+      .dpad-cross-h, .dpad-cross-v {
+        position: absolute;
+        background: #2d2040;
+        border-radius: 6px;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.08);
+      }
+      .dpad-cross-h {
+        width: 100%;
+        height: 40px;
+        top: 50%;
+        transform: translateY(-50%);
+      }
+      .dpad-cross-v {
+        width: 40px;
+        height: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .dpad-btn {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        background: transparent;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+        cursor: pointer;
+      }
+      .dpad-btn.active {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+      .dpad-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: rgba(255, 255, 255, 0.5);
+      }
+      .dpad-btn.active svg { fill: rgba(255, 255, 255, 0.85); }
+      .dpad-up    { top: 0;   left: 50%; transform: translateX(-50%); }
+      .dpad-down  { bottom: 0; left: 50%; transform: translateX(-50%); }
+      .dpad-left  { left: 0;  top: 50%; transform: translateY(-50%); }
+      .dpad-right { right: 0; top: 50%; transform: translateY(-50%); }
+      .dpad-center-dot {
+        position: absolute;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        background: #1a1228;
+        z-index: 3;
+      }
+
+      /* A / B buttons */
+      .gba-ab {
+        display: flex;
+        gap: 12px;
+        transform: rotate(-25deg);
+        flex-shrink: 0;
+      }
+      .gba-btn-round {
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        border: none;
+        font: bold 14px system-ui, sans-serif;
+        color: rgba(255,255,255,0.6);
+        text-shadow: 0 1px 1px rgba(0,0,0,0.3);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 3px 0 rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
+      }
+      .gba-btn-a { background: #6b3a7a; }
+      .gba-btn-b { background: #6b3a7a; }
+
+      /* Start / Select */
+      .gba-start-select {
+        position: absolute;
+        bottom: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 18px;
+      }
+      .gba-pill {
+        width: 40px;
+        height: 12px;
+        border-radius: 6px;
+        background: #5c4580;
+        box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
+      }
+      .gba-pill-label {
+        font: bold 7px system-ui, sans-serif;
+        color: rgba(255,255,255,0.35);
+        text-transform: uppercase;
+        text-align: center;
+        margin-top: 2px;
+        letter-spacing: 1px;
+      }
+
+      /* Speaker grille */
+      .gba-speaker {
+        position: absolute;
+        bottom: 16px;
+        right: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        transform: rotate(-30deg);
+      }
+      .gba-speaker-line {
+        width: 28px;
+        height: 2px;
+        border-radius: 1px;
+        background: rgba(0,0,0,0.15);
+      }
     </style>
   </head>
   <body>
     <canvas id="c"></canvas>
+    <div id="gba-shell">
+      <div class="gba-screen-area">
+        <div class="gba-screen-bezel" id="gba-bezel"></div>
+        <div class="gba-power-dot"></div>
+      </div>
+      <div class="gba-controls">
+        <div class="dpad-wrap">
+          <div class="dpad-cross-h"></div>
+          <div class="dpad-cross-v"></div>
+          <div class="dpad-center-dot"></div>
+          <div class="dpad-btn dpad-up" data-dir="up">
+            <svg viewBox="0 0 24 24"><path d="M12 4l-8 9h5v7h6v-7h5z"/></svg>
+          </div>
+          <div class="dpad-btn dpad-down" data-dir="down">
+            <svg viewBox="0 0 24 24"><path d="M12 20l8-9h-5V4H9v7H4z"/></svg>
+          </div>
+          <div class="dpad-btn dpad-left" data-dir="left">
+            <svg viewBox="0 0 24 24"><path d="M4 12l9-8v5h7v6h-7v5z"/></svg>
+          </div>
+          <div class="dpad-btn dpad-right" data-dir="right">
+            <svg viewBox="0 0 24 24"><path d="M20 12l-9-8v5H4v6h7v5z"/></svg>
+          </div>
+        </div>
+        <div class="gba-ab">
+          <div class="gba-btn-round gba-btn-b">B</div>
+          <div class="gba-btn-round gba-btn-a">A</div>
+        </div>
+        <div class="gba-start-select">
+          <div><div class="gba-pill"></div><div class="gba-pill-label">Select</div></div>
+          <div><div class="gba-pill"></div><div class="gba-pill-label">Start</div></div>
+        </div>
+        <div class="gba-speaker">
+          <div class="gba-speaker-line"></div>
+          <div class="gba-speaker-line"></div>
+          <div class="gba-speaker-line"></div>
+          <div class="gba-speaker-line"></div>
+          <div class="gba-speaker-line"></div>
+          <div class="gba-speaker-line"></div>
+        </div>
+      </div>
+    </div>
 
     <script>
       const canvas = document.getElementById("c");
@@ -52,6 +287,8 @@
       const TWIN_PEAKS_EDITOR_MODE = twinPeaksUrlParams.has("devMap");
       const TWIN_PEAKS_PUBLISHED_ONLY =
         twinPeaksUrlParams.has("play") || (!TWIN_PEAKS_EDITOR_MODE && !twinPeaksIsLocalDevHost());
+
+      let editorWindModeHudEl = null;
 
       function createMapEditorUI() {
         const wrap = document.createElement("div");
@@ -129,6 +366,15 @@
         undoBtn.style.font = "12px system-ui, sans-serif";
         undoBtn.style.marginRight = "8px";
 
+        const windModeHudEl = document.createElement("div");
+        windModeHudEl.style.width = "100%";
+        windModeHudEl.style.textAlign = "right";
+        windModeHudEl.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+        windModeHudEl.style.fontSize = "11px";
+        windModeHudEl.style.opacity = "0.95";
+        windModeHudEl.style.lineHeight = "1.4";
+        windModeHudEl.textContent = "Wind: —";
+
         const hoverTileEl = document.createElement("div");
         hoverTileEl.style.width = "100%";
         hoverTileEl.style.textAlign = "right";
@@ -140,9 +386,10 @@
 
         wrap.appendChild(undoBtn);
         wrap.appendChild(exportBtn);
+        wrap.appendChild(windModeHudEl);
         wrap.appendChild(hoverTileEl);
         document.body.appendChild(wrap);
-        return { paintSelect: select, angleSelect, undoBtn, exportBtn, hoverTileEl };
+        return { paintSelect: select, angleSelect, undoBtn, exportBtn, hoverTileEl, windModeHudEl };
       }
 
       const player = {
@@ -186,6 +433,8 @@
 
       /** Wind SVG draw opacity (no fade along path). */
       const WIND_PEAK_ALPHA = 0.7;
+      /** Tile rows at or above this Y get constant heavy wind (the Twin Peaks summit). */
+      const WIND_SUMMIT_MAX_TY = 60;
       /** Grass back keeps rustling this many seconds after wind no longer overlaps the tile. */
       const GRASS_WIND_RUSTLE_TAIL_SEC = 2;
       /** Same rustle frames as wind when Red lands on a grass tile (seconds). */
@@ -202,25 +451,17 @@
       const grassStepRustleLastHit = new Map();
       /** Active gusts: `{ variant, startX, x, y, vx, dw, dh, totalTravelPx }`. */
       let windGusts = [];
-      /** `"normal"` — 1–2 small gusts every 5–7s; `"windy"` — lasts 10–15s, medium+large pairs every 3–5s. */
+      /** Strong gusts + layered wind audio when `player.tileY < WIND_NORMAL_MIN_TILE_Y`; else calmer. */
+      const WIND_NORMAL_MIN_TILE_Y = 69;
       let windMode = "normal";
-      let windModeTimer = 50 + Math.random() * 70;
       let windNextGustWorldTime = 5 + Math.random() * 2;
+      let windSummitNextGustTime = 1 + Math.random() * 0.5;
 
       /** `{ tileX, tileY, age }` — tile stepped onto when splash spawned */
       let grassSplashes = [];
 
-      function windModeDurationSec(mode) {
-        if (mode === "normal") return 48 + Math.random() * 72;
-        return 10 + Math.random() * 5;
-      }
-
-      function advanceWindMode(dt) {
-        windModeTimer -= dt;
-        if (windModeTimer <= 0) {
-          windMode = windMode === "normal" ? "windy" : "normal";
-          windModeTimer = windModeDurationSec(windMode);
-        }
+      function syncWindModeFromPlayer() {
+        windMode = player.tileY < WIND_NORMAL_MIN_TILE_Y ? "windy" : "normal";
       }
 
       function flowerRustleStep(tx, ty, period) {
@@ -341,6 +582,78 @@
         }
       });
 
+      (function initGbaShell() {
+        const shell = document.getElementById("gba-shell");
+        if (!shell) return;
+        const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
+        if (isTouchDevice) {
+          const bezel = document.getElementById("gba-bezel");
+          if (bezel) bezel.appendChild(canvas);
+        }
+
+        const controls = shell.querySelector(".gba-controls");
+        if (!controls) return;
+        const activeTouches = new Map();
+
+        function pressDir(dir) { input[dir] = true; }
+        function releaseDir(dir) { input[dir] = false; }
+
+        function btnFromTouch(touch) {
+          const el = document.elementFromPoint(touch.clientX, touch.clientY);
+          if (!el) return null;
+          const btn = el.closest(".dpad-btn");
+          return btn && btn.dataset.dir ? btn : null;
+        }
+
+        controls.addEventListener("touchstart", (e) => {
+          e.preventDefault();
+          for (const touch of e.changedTouches) {
+            const btn = btnFromTouch(touch);
+            if (btn) {
+              activeTouches.set(touch.identifier, btn.dataset.dir);
+              btn.classList.add("active");
+              pressDir(btn.dataset.dir);
+            }
+          }
+        }, { passive: false });
+
+        controls.addEventListener("touchmove", (e) => {
+          e.preventDefault();
+          for (const touch of e.changedTouches) {
+            const prevDir = activeTouches.get(touch.identifier);
+            const btn = btnFromTouch(touch);
+            const newDir = btn ? btn.dataset.dir : null;
+            if (prevDir === newDir) continue;
+            if (prevDir) {
+              releaseDir(prevDir);
+              const prevBtn = controls.querySelector(`.dpad-${prevDir}`);
+              if (prevBtn) prevBtn.classList.remove("active");
+            }
+            if (newDir) {
+              activeTouches.set(touch.identifier, newDir);
+              btn.classList.add("active");
+              pressDir(newDir);
+            } else {
+              activeTouches.delete(touch.identifier);
+            }
+          }
+        }, { passive: false });
+
+        function handleEnd(e) {
+          for (const touch of e.changedTouches) {
+            const dir = activeTouches.get(touch.identifier);
+            if (dir) {
+              releaseDir(dir);
+              const btn = controls.querySelector(`.dpad-${dir}`);
+              if (btn) btn.classList.remove("active");
+              activeTouches.delete(touch.identifier);
+            }
+          }
+        }
+        controls.addEventListener("touchend", handleEnd);
+        controls.addEventListener("touchcancel", handleEnd);
+      })();
+
       const SPRITES_BASE = "characters/character_1/";
       const RED_FILES = {
         up: {
@@ -375,6 +688,10 @@
       };
 
       const GRASS_TILE_PX = 32;
+      /** Camera zoom: 1 = no zoom, 1.25 = 25% closer, 2 = double zoom, etc. */
+      const CAMERA_ZOOM_DESKTOP = 1.25;
+      const CAMERA_ZOOM_MOBILE = 1.0;
+      const CAMERA_ZOOM = window.matchMedia("(pointer: coarse)").matches ? CAMERA_ZOOM_MOBILE : CAMERA_ZOOM_DESKTOP;
 
       /**
        * World tile coordinates can be negative on X: extra columns west of authored 0..MAP_CONTENT_X_MAX.
@@ -681,7 +998,6 @@
         mountainForceVariant.set(`${ledgeRight},${ledgeTopY}`, "right");
 
         /** Full-width ridge below the grass/water band: brown `top` on every column (same face as car-underlay mountains). */
-        const MID_MOUNTAIN_TOP_RIDGE_TY = 45;
         for (let ix = 0; ix < worldWidthTiles; ix++) {
           const tx = MAP_X_MIN + ix;
           const ty = MID_MOUNTAIN_TOP_RIDGE_TY;
@@ -1531,6 +1847,82 @@
         sprites.loaded = false;
       });
 
+      const sfxStepCtx = new (window.AudioContext || window.webkitAudioContext)();
+      let sfxGrassBuffer = null;
+      let sfxWalkBuffer = null;
+      fetch("sounds/joentnt-walk-on-grass-1-291984.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => sfxStepCtx.decodeAudioData(buf))
+        .then((decoded) => { sfxGrassBuffer = decoded; })
+        .catch(() => {});
+      fetch("sounds/normal_walk.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => sfxStepCtx.decodeAudioData(buf))
+        .then((decoded) => { sfxWalkBuffer = decoded; })
+        .catch(() => {});
+      const SFX_GRASS_STEP_VOL = 0.275;
+      const SFX_WALK_STEP_VOL = 0.6;
+      function playStepSound(buffer, volume) {
+        if (!buffer) return;
+        if (sfxStepCtx.state === "suspended") sfxStepCtx.resume().catch(() => {});
+        const source = sfxStepCtx.createBufferSource();
+        source.buffer = buffer;
+        const gain = sfxStepCtx.createGain();
+        gain.gain.value = volume;
+        source.connect(gain);
+        gain.connect(sfxStepCtx.destination);
+        source.start(0);
+      }
+
+      const windAmbienceAudio = new Audio("sounds/wind_normal.mp3");
+      windAmbienceAudio.loop = true;
+      windAmbienceAudio.preload = "auto";
+      windAmbienceAudio.volume = 0.28;
+      const windStrongAmbienceAudio = new Audio("sounds/wind_strong.mp3");
+      windStrongAmbienceAudio.loop = true;
+      windStrongAmbienceAudio.preload = "auto";
+      windStrongAmbienceAudio.volume = 0;
+      const WIND_STRONG_MAX_VOL = 0.22;
+      const WIND_STRONG_FADE_SEC = 1.2;
+      const WIND_STRONG_FADE_SPEED = WIND_STRONG_MAX_VOL / WIND_STRONG_FADE_SEC;
+      let windStrongAmbiencePlaying = false;
+      let windAmbienceGestureSeen = false;
+      function tryStartWindAmbience() {
+        windAmbienceAudio.play().catch(() => {});
+      }
+      function updateWindStrongAmbienceAudio(dt) {
+        if (!windAmbienceGestureSeen) return;
+        const target = windMode === "windy" ? WIND_STRONG_MAX_VOL : 0;
+        const vol = windStrongAmbienceAudio.volume;
+        if (vol < target) {
+          windStrongAmbienceAudio.volume = Math.min(target, vol + WIND_STRONG_FADE_SPEED * dt);
+        } else if (vol > target) {
+          windStrongAmbienceAudio.volume = Math.max(target, vol - WIND_STRONG_FADE_SPEED * dt);
+        }
+        if (target > 0 && !windStrongAmbiencePlaying) {
+          windStrongAmbienceAudio.play().catch(() => {});
+          windStrongAmbiencePlaying = true;
+        }
+        if (windStrongAmbienceAudio.volume <= 0.001 && target === 0 && windStrongAmbiencePlaying) {
+          windStrongAmbienceAudio.pause();
+          windStrongAmbienceAudio.currentTime = 0;
+          windStrongAmbienceAudio.volume = 0;
+          windStrongAmbiencePlaying = false;
+        }
+      }
+      function onFirstUserGestureForWindAmbience() {
+        windAmbienceGestureSeen = true;
+        tryStartWindAmbience();
+        syncWindModeFromPlayer();
+        updateWindStrongAmbienceAudio(0);
+        window.removeEventListener("pointerdown", onFirstUserGestureForWindAmbience);
+        window.removeEventListener("keydown", onFirstUserGestureForWindAmbience);
+        window.removeEventListener("touchstart", onFirstUserGestureForWindAmbience, { capture: true });
+      }
+      window.addEventListener("pointerdown", onFirstUserGestureForWindAmbience, { passive: true });
+      window.addEventListener("keydown", onFirstUserGestureForWindAmbience);
+      window.addEventListener("touchstart", onFirstUserGestureForWindAmbience, { capture: true, passive: true });
+
       const objectTelescope = { loaded: false, img: null };
       loadImage(encodeURI("objects/Telescope.svg"))
         .then((img) => {
@@ -2044,7 +2436,9 @@
       /** Rim: top two mountain rows use “bottom” only; elsewhere use explicit paint or default brown `bottom` (no neighbor autotile). */
       /** Brown row drawn before car street so the Swamp band (54–55) appears on top (`drawBrownMountains(..., { onlyTy })`). */
       const MOUNTAIN_CAR_STREET_UNDERLAY_ROW = 53;
-      /** Water fill ends this many tile rows north of that row (smaller world `y` = further up the map). */
+      /** Full-width `top` mountain ridge; water fills tile rows with `ty` below this. */
+      const MID_MOUNTAIN_TOP_RIDGE_TY = 47;
+      /** Water fill ends this many tile rows north of the car-underlay row (legacy spacing; ridge row is authoritative). */
       const WATER_BASE_ROWS_NORTH_OF_CAR_UNDERLAY = 8;
 
       function drawBrownMountains(camX, camY, viewW, viewH, opts) {
@@ -2401,8 +2795,21 @@
         ctx.restore();
       }
 
+      function playerFeetWorldY() {
+        return player.y + GRASS_TILE_PX / 2 - 2;
+      }
+
+      function decorOverlayFeetWorldY(ty) {
+        return (ty + 1) * GRASS_TILE_PX;
+      }
+
+      /** Large rock draws in front of Red when his feet are north of the rock base (Pokémon-style depth). */
+      function bigRockDrawsInFrontOfPlayer(ty) {
+        return playerFeetWorldY() < decorOverlayFeetWorldY(ty);
+      }
+
       /** Ledge / rocks sit on `decorOverlays`; terrain in `map` draws underneath (PNG alpha). */
-      function drawDecorOverlayTiles(camX, camY, viewW, viewH) {
+      function drawDecorOverlayTiles(camX, camY, viewW, viewH, shouldDraw) {
         const tw = GRASS_TILE_PX;
         const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
         ctx.save();
@@ -2416,6 +2823,7 @@
           if (tx < tx0 || tx > tx1 || ty < ty0 || ty > ty1) continue;
           const dv = decorOverlays[k];
           if (!isTerrainBareOverlayCell(dv)) continue;
+          if (shouldDraw && !shouldDraw(tx, ty, dv)) continue;
           const slot = overlayBitmapImages[dv];
           if (!slot || !slot.loaded || !slot.img) continue;
           const img = slot.img;
@@ -2429,6 +2837,15 @@
           ctx.drawImage(img, dx, dy);
         }
         ctx.restore();
+      }
+
+      function decorOverlayDrawBeforePlayer(tx, ty, dv) {
+        if (dv === T_ROCK_BIG && bigRockDrawsInFrontOfPlayer(ty)) return false;
+        return true;
+      }
+
+      function decorOverlayDrawAfterPlayer(tx, ty, dv) {
+        return dv === T_ROCK_BIG && bigRockDrawsInFrontOfPlayer(ty);
       }
 
       /** Bottom-of-path signpost (sketch). */
@@ -2668,10 +3085,10 @@
         ctx.fillRect(0, 0, viewW, viewH);
       }
 
-      /** Full tile water under terrain north of the car-underlay row, ending `WATER_BASE_ROWS_NORTH_OF_CAR_UNDERLAY` rows above it; mountains/grass/path/street draw on top. */
+      /** Full tile water under terrain north of `MID_MOUNTAIN_TOP_RIDGE_TY`; mountains/grass/path/street draw on top. */
       function drawWaterBaseNorthOfCarUnderlayRow(camX, camY, viewW, viewH) {
         const tw = GRASS_TILE_PX;
-        const tyMaxExclusive = MOUNTAIN_CAR_STREET_UNDERLAY_ROW - WATER_BASE_ROWS_NORTH_OF_CAR_UNDERLAY;
+        const tyMaxExclusive = MID_MOUNTAIN_TOP_RIDGE_TY;
         const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
         const txStart = Math.max(MAP_X_MIN, tx0);
         const txEnd = Math.min(MAP_X_MAX, tx1);
@@ -2731,17 +3148,19 @@
       }
 
       function getCamera() {
-        const viewW = canvas.getBoundingClientRect().width;
-        const viewH = canvas.getBoundingClientRect().height;
+        const screenW = canvas.getBoundingClientRect().width;
+        const screenH = canvas.getBoundingClientRect().height;
+        const viewW = screenW / CAMERA_ZOOM;
+        const viewH = screenH / CAMERA_ZOOM;
         const camX = clamp(player.x - viewW / 2, WORLD_PX_X0, WORLD_PX_X1 - viewW);
         const camY = clamp(player.y - viewH / 2, 0, WORLD_H - viewH);
-        return { viewW, viewH, camX, camY };
+        return { viewW, viewH, camX, camY, screenW, screenH };
       }
 
       function screenToTile(clientX, clientY, camX, camY) {
         const r = canvas.getBoundingClientRect();
-        const sx = clientX - r.left;
-        const sy = clientY - r.top;
+        const sx = (clientX - r.left) / CAMERA_ZOOM;
+        const sy = (clientY - r.top) / CAMERA_ZOOM;
         const wx = camX + sx;
         const wy = camY + sy;
         const tx = Math.floor(wx / GRASS_TILE_PX);
@@ -2790,14 +3209,19 @@
 
         const eastOff = (opts.spawnEastExtra || 0) + 24 + Math.random() * 240;
         const startX = WORLD_PX_X1 + eastOff;
+        const yMinBound = opts.yMin != null ? opts.yMin : 0;
+        const yMaxBound = opts.yMax != null ? opts.yMax : Math.max(0, WORLD_H - dh);
         let y;
         if (opts.laneIndex !== undefined && opts.laneCount !== undefined) {
-          y = windYForLane(opts.laneIndex, opts.laneCount, dh);
+          const usable = Math.max(1, yMaxBound - yMinBound);
+          const lo = yMinBound + (opts.laneIndex / opts.laneCount) * usable;
+          const hi = yMinBound + ((opts.laneIndex + 1) / opts.laneCount) * usable;
+          y = clamp(lo + Math.random() * Math.max(3, hi - lo), yMinBound, yMaxBound);
         } else {
           y = clamp(
-            Math.random() * Math.max(1, WORLD_H - dh),
-            0,
-            Math.max(0, WORLD_H - dh),
+            yMinBound + Math.random() * Math.max(1, yMaxBound - yMinBound),
+            yMinBound,
+            yMaxBound,
           );
         }
 
@@ -2805,7 +3229,7 @@
           windMode === "windy"
             ? -(285 + Math.random() * 155)
             : -(220 + Math.random() * 120);
-        const totalTravelPx = startX + dw + 120 + Math.random() * 140;
+        const totalTravelPx = startX - WORLD_PX_X0 + dw + 120 + Math.random() * 140;
 
         windGusts.push({
           variant,
@@ -2825,7 +3249,7 @@
           const s = windGusts[i];
           s.x += s.vx * dt;
           const dist = s.startX - s.x;
-          if (dist >= s.totalTravelPx || s.x + s.dw < -80) windGusts.splice(i, 1);
+          if (dist >= s.totalTravelPx || s.x + s.dw < WORLD_PX_X0 - 80) windGusts.splice(i, 1);
         }
       }
 
@@ -2851,36 +3275,57 @@
       function step(dt) {
         const prevMoveT = player.moveT;
 
-        advanceWindMode(dt);
+        syncWindModeFromPlayer();
+        updateWindStrongAmbienceAudio(dt);
 
         if (worldTime >= windNextGustWorldTime) {
           if (windMode === "normal") {
-            const count = 1 + Math.floor(Math.random() * 2);
+            const count = 4 + Math.floor(Math.random() * 3);
             const laneCount = 10;
             const lanes = windPickDistinctLanes(count, laneCount);
             for (let i = 0; i < count; i++) {
+              const v = Math.random() < 0.3 ? "medium" : "small";
               spawnWindGust({
-                variant: "small",
+                variant: v,
                 laneIndex: lanes[i],
                 laneCount,
-                spawnEastExtra: i * 52,
+                spawnEastExtra: i * 60,
               });
             }
-            windNextGustWorldTime = worldTime + 5 + Math.random() * 2;
+            windNextGustWorldTime = worldTime + 4 + Math.random() * 2;
           } else {
-            const variants = Math.random() < 0.5 ? ["medium", "large"] : ["large", "medium"];
+            const count = 4 + Math.floor(Math.random() * 2);
             const laneCount = 8;
-            const lanes = windPickDistinctLanes(2, laneCount);
-            for (let i = 0; i < variants.length; i++) {
+            const lanes = windPickDistinctLanes(count, laneCount);
+            const sizes = ["medium", "large"];
+            for (let i = 0; i < count; i++) {
               spawnWindGust({
-                variant: variants[i],
+                variant: sizes[Math.floor(Math.random() * sizes.length)],
                 laneIndex: lanes[i],
                 laneCount,
-                spawnEastExtra: i * 48,
+                spawnEastExtra: i * 55,
               });
             }
             windNextGustWorldTime = worldTime + 3 + Math.random() * 2;
           }
+        }
+
+        if (worldTime >= windSummitNextGustTime) {
+          const summitYMax = WIND_SUMMIT_MAX_TY * GRASS_TILE_PX;
+          const laneCount = 6;
+          const count = 4 + Math.floor(Math.random() * 3);
+          const lanes = windPickDistinctLanes(count, laneCount);
+          for (let i = 0; i < count; i++) {
+            spawnWindGust({
+              variant: Math.random() < 0.6 ? "large" : "medium",
+              yMin: 0,
+              yMax: summitYMax,
+              laneIndex: lanes[i],
+              laneCount,
+              spawnEastExtra: i * 45,
+            });
+          }
+          windSummitNextGustTime = worldTime + 0.5 + Math.random() * 0.8;
         }
 
         const isMoving = player.moveT < 1;
@@ -2915,6 +3360,9 @@
               player.tileX = nx;
               player.tileY = ny;
               player.moveT = 0;
+              const stepCell = cellAtTile(nx, ny);
+              if (stepCell === T_GRASS) playStepSound(sfxGrassBuffer, SFX_GRASS_STEP_VOL);
+              else playStepSound(sfxWalkBuffer, SFX_WALK_STEP_VOL);
             } else {
               player.dir = dir;
             }
@@ -3006,9 +3454,11 @@
       }
 
       function render() {
-        const { viewW, viewH, camX, camY } = getCamera();
+        const { viewW, viewH, camX, camY, screenW, screenH } = getCamera();
 
-        ctx.clearRect(0, 0, viewW, viewH);
+        ctx.clearRect(0, 0, screenW, screenH);
+        ctx.save();
+        ctx.scale(CAMERA_ZOOM, CAMERA_ZOOM);
         drawBackground(camX, camY, viewW, viewH);
         drawWaterBaseNorthOfCarUnderlayRow(camX, camY, viewW, viewH);
         drawStreetGround(camX, camY, viewW, viewH);
@@ -3033,7 +3483,7 @@
         drawWallTiles(camX, camY, viewW, viewH);
         drawMapObjectTiles(camX, camY, viewW, viewH);
         drawFenceOverlayTiles(camX, camY, viewW, viewH);
-        drawDecorOverlayTiles(camX, camY, viewW, viewH);
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawBeforePlayer);
 
         const selDraw = editorSelectDrag
           ? normalizeEditorSelect(editorSelectDrag)
@@ -3083,6 +3533,7 @@
         else drawFlowerFrontPatchAll(camX, camY, viewW, viewH);
 
         drawPlayer(screenX, screenY);
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAfterPlayer);
 
         if (toGrass && !walkUpOntoGrass) drawGrassFrontAtTile(camX, camY, tcx, tcy);
         if (inFlower) drawFlowerFrontAtTile(camX, camY, tcx, tcy);
@@ -3090,6 +3541,11 @@
         drawGrassSplashes(camX, camY, viewW, viewH);
 
         drawWind(camX, camY, viewW, viewH);
+        if (TWIN_PEAKS_EDITOR_MODE && editorWindModeHudEl) {
+          const label = windMode === "windy" ? "strong (y<" + WIND_NORMAL_MIN_TILE_Y + ")" : "normal (y≥" + WIND_NORMAL_MIN_TILE_Y + ")";
+          editorWindModeHudEl.textContent = "Wind: " + label + " · row " + player.tileY;
+        }
+        ctx.restore();
       }
 
       let last = performance.now();
@@ -3196,8 +3652,9 @@
 
         if (TWIN_PEAKS_EDITOR_MODE) {
         // Editor wiring: dropdown + click-to-paint + autosave.
-        const { paintSelect, angleSelect, undoBtn, exportBtn, hoverTileEl } =
+        const { paintSelect, angleSelect, undoBtn, exportBtn, hoverTileEl, windModeHudEl } =
           createMapEditorUI();
+        editorWindModeHudEl = windModeHudEl;
         window.addEventListener("mousemove", (e) => {
           const r = canvas.getBoundingClientRect();
           if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) {
