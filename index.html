@@ -2550,7 +2550,13 @@
       }
 
       function findPlayerStart() {
-        /** Foot of top stair (tile below 2×2 `T_STAIRS` at x 17–18 on the rim); temporary for layout work. */
+        /** Main spawn: path below the Twin Peaks board; facing down (see `player.dir`). */
+        const spawnTx = 3;
+        const spawnTy = 102;
+        if (tileInWorldBounds(spawnTx, spawnTy) && !tileBlocksMovement(spawnTx, spawnTy)) {
+          return { tx: spawnTx, ty: spawnTy };
+        }
+        /** Foot of top stair (tile below 2×2 `T_STAIRS` at x 17–18 on the rim). */
         const footTx = 17;
         const footTy = MAP_CONTENT_Y0 + 2;
         if (tileInWorldBounds(footTx, footTy) && !tileBlocksMovement(footTx, footTy)) {
@@ -4428,6 +4434,7 @@
         const startTile = findPlayerStart();
         player.tileX = startTile.tx;
         player.tileY = startTile.ty;
+        player.dir = "down";
         player.fromTileX = player.toTileX = player.tileX;
         player.fromTileY = player.toTileY = player.tileY;
         player.x = tileCenterX(player.tileX);
