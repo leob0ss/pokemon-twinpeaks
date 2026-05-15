@@ -1,0 +1,514 @@
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #58caaf;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji",
+          "Segoe UI Emoji";
+        overflow: hidden;
+      }
+      canvas {
+        position: fixed;
+        inset: 0;
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        image-rendering: pixelated;
+      }
+
+      /* ── GBA-style mobile shell ── */
+      #gba-shell {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        flex-direction: column;
+        background: #8b6fae;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      @media (pointer: coarse) {
+        #gba-shell {
+          display: flex;
+          min-height: 100vh;
+          min-height: 100dvh;
+          height: 100vh;
+          height: 100dvh;
+          max-height: 100vh;
+          max-height: 100dvh;
+          overflow: hidden;
+        }
+      }
+
+      /* Screen bezel */
+      /* Top section (~60% of dynamic viewport): bezel + game canvas; remainder is controls. */
+      .gba-screen-area {
+        flex: 0 0 60vh;
+        flex: 0 0 60dvh;
+        max-height: 60vh;
+        max-height: 60dvh;
+        min-height: 0;
+        background: #4a3568;
+        padding: 10px 12px 6px;
+        border-bottom: 3px solid #6b4f8a;
+        display: flex;
+        flex-direction: column;
+      }
+      .gba-screen-bezel {
+        background: #1a1a2e;
+        border-radius: 6px;
+        padding: 4px;
+        box-shadow: inset 0 2px 8px rgba(0,0,0,0.5);
+        flex: 1 1 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .gba-canvas-host {
+        flex: 1 1 0;
+        min-height: 0;
+        min-width: 0;
+        width: 100%;
+        position: relative;
+      }
+      /* Canvas inside mobile shell: absolute fill of host (keeps square pixels, no intrinsic-ratio squash). */
+      .gba-canvas-host canvas {
+        position: absolute !important;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        border-radius: 3px;
+        display: block;
+        image-rendering: pixelated;
+        -webkit-touch-callout: none;
+      }
+      .gba-power-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #4ce44c;
+        box-shadow: 0 0 6px #4ce44c;
+        margin: 4px 0 0 8px;
+      }
+
+      /* Controls area */
+      .gba-controls {
+        flex: 1 1 0;
+        min-height: 0;
+        background: #8b6fae;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 24px;
+        position: relative;
+      }
+
+      /* D-pad: GBA-style cross */
+      .dpad-wrap {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        flex-shrink: 0;
+      }
+      .dpad-cross-h, .dpad-cross-v {
+        position: absolute;
+        background: #2d2040;
+        border-radius: 6px;
+        box-shadow: inset 0 1px 3px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.08);
+      }
+      .dpad-cross-h {
+        width: 100%;
+        height: 40px;
+        top: 50%;
+        transform: translateY(-50%);
+      }
+      .dpad-cross-v {
+        width: 40px;
+        height: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .dpad-btn {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        background: transparent;
+        border: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2;
+        cursor: pointer;
+      }
+      .dpad-btn.active {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+      }
+      .dpad-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: rgba(255, 255, 255, 0.5);
+      }
+      .dpad-btn.active svg { fill: rgba(255, 255, 255, 0.85); }
+      .dpad-up    { top: 0;   left: 50%; transform: translateX(-50%); }
+      .dpad-down  { bottom: 0; left: 50%; transform: translateX(-50%); }
+      .dpad-left  { left: 0;  top: 50%; transform: translateY(-50%); }
+      .dpad-right { right: 0; top: 50%; transform: translateY(-50%); }
+      .dpad-center-dot {
+        position: absolute;
+        top: 50%; left: 50%;
+        transform: translate(-50%, -50%);
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        background: #1a1228;
+        z-index: 3;
+      }
+
+      @media (pointer: coarse) {
+        .dpad-wrap {
+          width: 180px;
+          height: 180px;
+        }
+        .dpad-cross-h,
+        .dpad-cross-v {
+          border-radius: 8px;
+        }
+        .dpad-cross-h {
+          height: 54px;
+        }
+        .dpad-cross-v {
+          width: 54px;
+        }
+        .dpad-btn {
+          width: 56px;
+          height: 56px;
+        }
+        .dpad-btn.active {
+          border-radius: 8px;
+        }
+        .dpad-btn svg {
+          width: 22px;
+          height: 22px;
+        }
+        .dpad-center-dot {
+          width: 18px;
+          height: 18px;
+        }
+      }
+
+      /* Speaker grille */
+      .gba-speaker {
+        position: absolute;
+        bottom: 16px;
+        right: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        transform: rotate(-30deg);
+      }
+      .gba-speaker-line {
+        width: 28px;
+        height: 2px;
+        border-radius: 1px;
+        background: rgba(0,0,0,0.15);
+      }
+
+      /* ── Telescope skyline view ── */
+      #telescope-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(4, 6, 14, 0.94);
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.28s ease, visibility 0.28s;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+      #telescope-overlay.telescope-overlay--hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .telescope-stage {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 14px;
+      }
+      .telescope-ring {
+        position: relative;
+        width: min(78vmin, 440px);
+        height: min(78vmin, 440px);
+        border-radius: 50%;
+        padding: 12px;
+        background: linear-gradient(155deg, #6d5a45 0%, #2e2418 42%, #544433 100%);
+        box-shadow:
+          0 0 0 3px #14100a,
+          0 16px 56px rgba(0, 0, 0, 0.65),
+          inset 0 2px 5px rgba(255, 255, 255, 0.12);
+      }
+      .telescope-viewport {
+        width: 100%;
+        height: 100%;
+        border-radius: 50%;
+        overflow: hidden;
+        position: relative;
+        background: #060a14;
+        box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.85);
+        touch-action: none;
+        cursor: grab;
+      }
+      .telescope-viewport.telescope-viewport--dragging {
+        cursor: grabbing;
+      }
+      .telescope-viewport::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: 50%;
+        box-shadow: inset 0 0 28px 8px rgba(0, 0, 0, 0.55);
+        pointer-events: none;
+        z-index: 2;
+      }
+      #telescope-panorama-wrap {
+        position: absolute;
+        top: 0;
+        left: 0;
+        height: 100%;
+        will-change: transform;
+      }
+      #telescope-panorama-wrap img {
+        height: 100%;
+        width: auto;
+        display: block;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+      .telescope-edge {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 24%;
+        z-index: 3;
+        cursor: ew-resize;
+      }
+      .telescope-edge-left {
+        left: 0;
+        border-radius: 50% 0 0 50%;
+      }
+      .telescope-edge-right {
+        right: 0;
+        border-radius: 0 50% 50% 0;
+      }
+      .telescope-edge:hover {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.08), transparent);
+      }
+      .telescope-edge-right:hover {
+        background: linear-gradient(270deg, rgba(255, 255, 255, 0.08), transparent);
+      }
+      .telescope-edge.telescope-edge--active {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.14), transparent);
+      }
+      .telescope-edge-right.telescope-edge--active {
+        background: linear-gradient(270deg, rgba(255, 255, 255, 0.14), transparent);
+      }
+      .telescope-edge-label {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 22px;
+        line-height: 1;
+        color: rgba(255, 255, 255, 0.35);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      .telescope-edge-left .telescope-edge-label {
+        left: 14%;
+      }
+      .telescope-edge-right .telescope-edge-label {
+        right: 14%;
+      }
+      .telescope-edge:hover .telescope-edge-label,
+      .telescope-edge.telescope-edge--active .telescope-edge-label {
+        opacity: 0.85;
+      }
+      .telescope-close {
+        position: absolute;
+        top: -8px;
+        right: -8px;
+        z-index: 4;
+        width: 34px;
+        height: 34px;
+        border: 2px solid rgba(255, 255, 255, 0.35);
+        border-radius: 50%;
+        background: rgba(20, 18, 28, 0.9);
+        color: #fff;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0;
+      }
+      .telescope-close:hover {
+        background: rgba(40, 36, 52, 0.95);
+      }
+      .telescope-caption {
+        margin: 0;
+        max-width: min(92vw, 440px);
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: rgba(255, 255, 255, 0.55);
+        text-align: center;
+        line-height: 1.45;
+      }
+      .telescope-caption-touch {
+        display: none;
+      }
+      .telescope-mobile-pan {
+        display: none;
+        gap: 12px;
+        width: min(92vw, 440px);
+      }
+      .telescope-pan-btn {
+        flex: 1;
+        min-height: 48px;
+        padding: 10px 14px;
+        border: 2px solid rgba(255, 255, 255, 0.28);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+      .telescope-pan-btn:active,
+      .telescope-pan-btn.telescope-pan-btn--active {
+        background: rgba(255, 255, 255, 0.22);
+        border-color: rgba(255, 255, 255, 0.45);
+      }
+
+      @media (pointer: coarse) {
+        #telescope-overlay {
+          align-items: flex-start;
+          padding: max(10px, env(safe-area-inset-top)) 12px
+            calc(40dvh + max(0px, env(safe-area-inset-bottom))) 12px;
+        }
+        .telescope-ring {
+          width: min(62vmin, 340px);
+          height: min(62vmin, 340px);
+        }
+        .telescope-edge {
+          width: 30%;
+        }
+        .telescope-edge-label {
+          opacity: 0.8;
+          font-size: 28px;
+        }
+        .telescope-close {
+          width: 48px;
+          height: 48px;
+          font-size: 26px;
+          top: -6px;
+          right: -6px;
+        }
+        .telescope-caption-mouse {
+          display: none;
+        }
+        .telescope-caption-touch {
+          display: inline;
+        }
+        .telescope-mobile-pan {
+          display: flex;
+        }
+      }
+
+      /* ── Pokémon-style text box ── */
+      #message-box-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 10001;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        padding: 0 10px 14px;
+        box-sizing: border-box;
+        pointer-events: auto;
+        touch-action: manipulation;
+      }
+      #message-box-overlay.message-box--hidden {
+        display: none;
+        pointer-events: none;
+      }
+      .msgbox-frame {
+        width: min(100%, 720px);
+        padding: 5px;
+        background: #383850;
+        border-radius: 6px;
+        box-shadow:
+          0 0 0 3px #101020,
+          inset 0 0 0 2px #585878,
+          0 10px 28px rgba(0, 0, 0, 0.45);
+      }
+      .msgbox-inner {
+        position: relative;
+        background: #f8f8f8;
+        border: 3px solid #484858;
+        border-radius: 4px;
+        padding: 18px 22px 30px;
+        min-height: 88px;
+        box-shadow: inset 0 2px 0 #fff, inset 0 -2px 0 #d0d0d8;
+      }
+      .msgbox-text {
+        margin: 0;
+        font-family: "Press Start 2P", "Courier New", monospace;
+        font-size: 11px;
+        line-height: 1.85;
+        color: #202028;
+        letter-spacing: 0.02em;
+        word-wrap: break-word;
+      }
+      .msgbox-arrow {
+        position: absolute;
+        right: 14px;
+        bottom: 10px;
+        font-family: "Press Start 2P", monospace;
+        font-size: 10px;
+        line-height: 1;
+        color: #383850;
+        display: none;
+      }
+      .msgbox-arrow.msgbox-arrow--visible {
+        display: block;
+        animation: msgbox-blink 0.55s step-end infinite;
+      }
+      @keyframes msgbox-blink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0;
+        }
+      }
+      @media (pointer: coarse) {
+        #message-box-overlay {
+          padding-bottom: calc(40dvh + 14px);
+        }
+        .msgbox-text {
+          font-size: 10px;
+          line-height: 1.9;
+        }
+      }

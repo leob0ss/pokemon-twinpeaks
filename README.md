@@ -1,14 +1,14 @@
 # Pokemon Twin Peaks
 
-A top-down Pokémon DS-style walkaround built as a **single `index.html` file** with vanilla JavaScript and Canvas 2D — no frameworks, no bundler, no dependencies.
+A top-down Pokémon DS-style walkaround built with **vanilla JavaScript**, **Canvas 2D**, and **ES modules** — no frameworks, no bundler, no npm dependencies.
 
 Walk around a hand-painted tile map, explore mountains, paths, swamp streets, flowers, log fences, rock formations, and more — all rendered in real time on an HTML canvas with pixel-art scaling.
 
 ## How it works
 
-### One-file architecture
+### Module layout (no bundler)
 
-Everything lives in `index.html`: the canvas element, all CSS, the full game loop, map generation, tile rendering, sprite animation, the map editor, and save/load logic. The surrounding folders are purely **static assets** (PNGs and SVGs) loaded at runtime.
+The game ships as **vanilla ES modules**: `index.html` loads `main.js`, which imports `js/ui-env.js` (shared touch/audio/camera flags). **`?devMap`** triggers a dynamic `import("./js/editor.js")` after the map boots so visitors do not download the map editor unless authoring. All CSS lives in **`styles.css`**. Raster/SVG world art lives under **`Visual_assets/`** and is referenced via **`VISUAL_ASSETS_ROOT`** in `main.js` (and the telescope `<img>` path in `index.html`). Everything still runs without npm or a build step.
 
 ### Map & terrain
 
@@ -41,11 +41,11 @@ A `requestAnimationFrame` loop calls `render()` each frame, which paints layers 
 10. Tall decor drawn after the player when they stand north of the prop — props and flowers keep a stable order relative to each other; only player vs tall props is dynamic
 11. Grass splashes and wind gusts
 
-**Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or tap down on the mobile shell). A circular panorama (`view/Twinpeaks_fullview.png`) opens; pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **B** / **×** closes it.
+**Path sign:** the board blocks that tile. Stand directly below it, face **up**, press **↑** for a Pokémon-style text box. **Space / Enter / Z / X** or tap the box advances and closes.
 
-**Path sign:** the board blocks that tile. Stand directly below it, face **up**, press **↑** for a Pokémon-style text box. **Space / Enter / Z / X**, tap the box, or **A** / **B** on the GBA shell advances and closes.
+**Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or tap down on the mobile shell). A circular panorama (`Visual_assets/view/Twinpeaks_fullview.png`) opens; pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **×** closes it.
 
-Wind ambience is **position-based**: stronger layered wind when the player is north of the summit threshold (see `WIND_NORMAL_MIN_TILE_Y` in `index.html`). In `?devMap`, a small HUD shows wind mode and row.
+Wind ambience is **position-based**: stronger layered wind when the player is north of the summit threshold (see `WIND_NORMAL_MIN_TILE_Y` in `main.js`). In `?devMap`, a small HUD shows wind mode and row.
 
 ### Movement & collision
 
@@ -58,23 +58,28 @@ Character sprites are pre-exported PNGs (4 steps × 4 directions). Terrain tiles
 ## Project structure
 
 ```
-index.html            Main game (all JS + HTML + CSS)
+index.html            HTML shell + canvas; links styles.css and main.js
+main.js               Game loop, map, rendering, audio, persistence
+js/ui-env.js          `UI` getters: coarse pointer, camera zoom, mobile audio multiplier
+js/editor.js          Map editor UI + wiring (loaded only with `?devMap`)
+styles.css            All game + shell styles
 published-map.json    Shipped map edits (the world visitors walk on)
-characters/           Player sprite PNGs (Red, 4-dir × 4-step)
-grass/                Grass and flower tile SVGs/PNGs
-earth/                Earth path tile SVGs + corner PNGs
-street/               Road tile SVGs + corner PNGs
-street_car/           Swamp street tile PNGs + corner PNGs
-mountain/             Mountain face PNGs + corner PNGs
-fence/                Log fence PNGs (7 variants)
-ledge/                Ledge PNG
-rocks/                Rock PNGs (small, medium, big)
-objects/              Telescope SVG, path board PNG, lamppost PNG
-view/                 Telescope panorama PNG (full skyline)
-stair/                Stairs PNG
-vehicles/             Vehicle PNGs (bicycles, truck)
-water/                Water tile PNG
-wind/                 Wind gust SVGs (small, medium, large)
+Visual_assets/        All raster/vector map & character art (paths via `VISUAL_ASSETS_ROOT` in main.js)
+  characters/         Player sprite PNGs (Red, 4-dir × 4-step)
+  grass/              Grass and flower tile SVGs/PNGs
+  earth/              Earth path tile SVGs + corner PNGs
+  street/             Road tile SVGs + corner PNGs
+  street_car/         Swamp street tile PNGs + corner PNGs
+  mountain/           Mountain face PNGs + corner PNGs
+  fence/              Log fence PNGs (7 variants)
+  ledge/              Ledge PNG
+  rocks/              Rock PNGs (small, medium, big)
+  objects/            Telescope SVG, path board PNG, lamppost PNG
+  view/               Telescope panorama PNG (full skyline)
+  stair/              Stairs PNG
+  vehicles/           Vehicle PNGs (bicycles, truck)
+  water/              Water tile PNG
+  wind/               Wind gust SVGs (small, medium, large)
 sounds/               Footstep and wind ambience audio
 reference_map/        Design reference files
 map_saves/            Older published-map.json backups (V1–V4)
@@ -82,7 +87,7 @@ map_saves/            Older published-map.json backups (V1–V4)
 
 ## Running locally
 
-Serve the repo root with a static file server (`file://` can block fetches for map/audio):
+Serve the repo root with a static file server. **ES modules** (`main.js` → `js/*.js`) require HTTP on some browsers; `file://` is not recommended.
 
 ```bash
 python3 -m http.server 5173
@@ -99,7 +104,7 @@ Then open [http://localhost:5173](http://localhost:5173) (add `?devMap` for the 
 | Esc | Close telescope view |
 | Space / Enter / Z / X | Advance or close the sign text box when it is open |
 
-On narrow / touch screens, a **GBA-style shell** appears: D-pad maps to arrows, **A** / **B** can interact with overlays (telescope close, message box).
+On narrow / touch screens, a **GBA-style shell** appears: the D-pad maps to arrow keys for movement.
 
 ## Map editor
 

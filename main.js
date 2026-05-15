@@ -1,0 +1,3848 @@
+import { UI } from "./js/ui-env.js";
+
+/** Raster/vector game art lives under this folder at site root. */
+const VISUAL_ASSETS_ROOT = "Visual_assets";
+
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      // --- Super-simple map editor (personal use) ---
+      const MAP_EDITS_STORAGE_KEY_V2 = "twinpeaks_map_edits_v2";
+      const MAP_EDITS_STORAGE_KEY_V1 = "twinpeaks_map_edits_v1";
+      /** Shipped with the site: everyone loads this; replace via Export + commit to publish map changes. */
+      const PUBLISHED_MAP_URL = "published-map.json";
+      const twinPeaksUrlParams = new URLSearchParams(location.search);
+      function twinPeaksIsLocalDevHost() {
+        const h = location.hostname;
+        if (h === "localhost" || h === "127.0.0.1" || h === "[::1]") return true;
+        if (location.protocol === "file:") return true;
+        return false;
+      }
+      /**
+       * `?devMap` — full editor; load/save **localStorage** only (no merge with `published-map.json`).
+       * Else on **localhost / file:** — merge **published + localStorage** so your latest paints are not lost while authoring.
+       * Else on a **deployed host** — **published map only** (visitors; no localStorage overlay).
+       * `?play` — force published-only (e.g. test the live bundle on localhost).
+       */
+      const TWIN_PEAKS_EDITOR_MODE = twinPeaksUrlParams.has("devMap");
+      const TWIN_PEAKS_PUBLISHED_ONLY =
+        twinPeaksUrlParams.has("play") || (!TWIN_PEAKS_EDITOR_MODE && !twinPeaksIsLocalDevHost());
+
+      const editorHud = {
+        windModeHudEl: null,
+        mapClipboard: null,
+        editorCopyRect: null,
+        editorSelectDrag: null,
+        editorPasteTarget: null,
+      };
+
+
+      const player = {
+        r: 9,
+        speed: 160, // px/s (scaled with GRASS_TILE_PX vs legacy 44px tiles)
+        runMultiplier: 1.6,
+        dir: "down", // "up" | "down" | "left" | "right"
+        walkTime: 0,
+
+        // Tile-step movement (Pokemon-ish).
+        tileX: 0,
+        tileY: 0,
+        fromTileX: 0,
+        fromTileY: 0,
+        toTileX: 0,
+        toTileY: 0,
+        moveT: 1, // 0..1
+        moveDuration: 0.165, // longer linear slide (still constant speed); paired with walkFps below
+        walkFps: 16, // ~2.6 frame ticks per tile at walk — tweak together with moveDuration
+
+        // Derived each frame
+        x: 0,
+        y: 0,
+        walkFrame: 1,
+      };
+
+      const input = {
+        up: false,
+        down: false,
+        left: false,
+        right: false,
+        run: false,
+      };
+
+      function clamp(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      // Global time for tile animations
+      let worldTime = 0;
+
+      /** Wind SVG draw opacity (no fade along path). */
+      const WIND_PEAK_ALPHA = 0.7;
+      /** Tile rows at or above this Y get constant heavy wind (the Twin Peaks summit). */
+      const WIND_SUMMIT_MAX_TY = 60;
+      /** Grass back keeps rustling this many seconds after wind no longer overlaps the tile. */
+      const GRASS_WIND_RUSTLE_TAIL_SEC = 2;
+      /** Same rustle frames as wind when Red lands on a grass tile (seconds). */
+      const GRASS_STEP_RUSTLE_SEC = 1;
+      /** Grass foot splash: instant on, smooth eased fall, smooth fade out. */
+      const GRASS_SPLASH_DURATION_SEC = 0.16;
+      /** Max downward offset (fraction of tile). Scaled with duration so motion stays same “speed”, not rushed. */
+      const GRASS_SPLASH_FALL_TILE_FRAC = 0.46 * (GRASS_SPLASH_DURATION_SEC / 0.22);
+      /** Fade begins earlier so it’s gone sooner without tightening the fall easing. */
+      const GRASS_SPLASH_FADE_START_U = 0.38;
+      /** `"tx,ty"` → last `worldTime` wind overlapped this grass tile */
+      const grassWindLastHit = new Map();
+      /** `"tx,ty"` → last `worldTime` player landed on this grass tile */
+      const grassStepRustleLastHit = new Map();
+      /** Active gusts: `{ variant, startX, x, y, vx, dw, dh, totalTravelPx }`. */
+      let windGusts = [];
+      /** Strong gusts + layered wind audio when `player.tileY < WIND_NORMAL_MIN_TILE_Y`; else calmer. */
+      const WIND_NORMAL_MIN_TILE_Y = 69;
+      let windMode = "normal";
+      let windNextGustWorldTime = 5 + Math.random() * 2;
+      let windSummitNextGustTime = 1 + Math.random() * 0.5;
+
+      /** `{ tileX, tileY, age }` — tile stepped onto when splash spawned */
+      let grassSplashes = [];
+
+      function syncWindModeFromPlayer() {
+        windMode = player.tileY < WIND_NORMAL_MIN_TILE_Y ? "windy" : "normal";
+      }
+
+      function flowerRustleStep(tx, ty, period) {
+        // Global synced phase (all flowers animate together).
+        const t = (worldTime / period) % 1;
+        return Math.floor(t * 6); // 0..5
+      }
+
+      function grassRustleFrameIndex(period) {
+        const t = (worldTime / period) % 1;
+        return Math.floor(t * 6); // 0..5
+      }
+
+      async function loadSvgHeadAnimatedFrames(src, headGroupId, dxyFrames) {
+        // Load SVG text, then build a few rasterizable SVG variants by translating just the head group.
+        const res = await fetch(src);
+        const svgText = await res.text();
+        const parser = new DOMParser();
+        const base = parser.parseFromString(svgText, "image/svg+xml");
+        const baseEl = base.documentElement;
+        const serializer = new XMLSerializer();
+
+        const frames = [];
+        for (const [dx, dy] of dxyFrames) {
+          const doc = base.cloneNode(true);
+          const head = doc.getElementById(headGroupId);
+          if (head) {
+            const prev = head.getAttribute("transform") || "";
+            const t = `translate(${dx} ${dy})`;
+            head.setAttribute("transform", prev ? `${t} ${prev}` : t);
+          }
+          const outText = serializer.serializeToString(doc.documentElement || baseEl);
+          const blob = new Blob([outText], { type: "image/svg+xml" });
+          const url = URL.createObjectURL(blob);
+          frames.push(loadImage(url).finally(() => URL.revokeObjectURL(url)));
+        }
+        return Promise.all(frames);
+      }
+
+      async function loadSvgMultiGroupAnimatedFrames(src, groupIds, dxyFrames, perGroupDxyFrames) {
+        // Like flower heads, but animates multiple groups (e.g. grass leaves) with per-group offsets per frame.
+        const res = await fetch(src);
+        const svgText = await res.text();
+        const parser = new DOMParser();
+        const base = parser.parseFromString(svgText, "image/svg+xml");
+        const baseEl = base.documentElement;
+        const serializer = new XMLSerializer();
+
+        const frames = [];
+        for (let i = 0; i < dxyFrames.length; i++) {
+          const doc = base.cloneNode(true);
+          for (let gi = 0; gi < groupIds.length; gi++) {
+            const id = groupIds[gi];
+            const el = doc.getElementById(id);
+            if (!el) continue;
+            const [gdx, gdy] = (perGroupDxyFrames[gi] && perGroupDxyFrames[gi][i]) || dxyFrames[i];
+            const prev = el.getAttribute("transform") || "";
+            const t = `translate(${gdx} ${gdy})`;
+            el.setAttribute("transform", prev ? `${t} ${prev}` : t);
+          }
+          const outText = serializer.serializeToString(doc.documentElement || baseEl);
+          const blob = new Blob([outText], { type: "image/svg+xml" });
+          const url = URL.createObjectURL(blob);
+          frames.push(loadImage(url).finally(() => URL.revokeObjectURL(url)));
+        }
+        return Promise.all(frames);
+      }
+
+      function resize() {
+        const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+        canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+
+      window.addEventListener("keydown", (e) => {
+        if (messageBoxOpen) {
+          if (e.key === "Escape" || isMessageBoxAdvanceKey(e.key)) {
+            e.preventDefault();
+            advanceMessageBox();
+          }
+          return;
+        }
+        if (telescopeViewOpen) {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeTelescopeView();
+          }
+          return;
+        }
+        if (e.key === "ArrowUp" && playerCanReadBoardSign()) {
+          e.preventDefault();
+          openMessageBox(BOARD_SIGN_MESSAGE);
+          return;
+        }
+        if (e.key === "ArrowDown" && playerCanUseTelescope()) {
+          e.preventDefault();
+          openTelescopeView();
+          return;
+        }
+        if (e.key.startsWith("Arrow")) e.preventDefault();
+        switch (e.key) {
+          case "ArrowUp":
+            input.up = true;
+            break;
+          case "ArrowDown":
+            input.down = true;
+            break;
+          case "ArrowLeft":
+            input.left = true;
+            break;
+          case "ArrowRight":
+            input.right = true;
+            break;
+          case "Shift":
+            input.run = true;
+            break;
+        }
+      });
+
+      window.addEventListener("keyup", (e) => {
+        switch (e.key) {
+          case "ArrowUp":
+            input.up = false;
+            break;
+          case "ArrowDown":
+            input.down = false;
+            break;
+          case "ArrowLeft":
+            input.left = false;
+            break;
+          case "ArrowRight":
+            input.right = false;
+            break;
+          case "Shift":
+            input.run = false;
+            break;
+        }
+      });
+
+      (function initGbaShell() {
+        const shell = document.getElementById("gba-shell");
+        if (!shell) return;
+        const isTouchDevice = UI.coarsePointer;
+        if (isTouchDevice) {
+          const host = document.getElementById("gba-canvas-host");
+          const bezel = document.getElementById("gba-bezel");
+          const mount = host || bezel;
+          if (mount) {
+            mount.appendChild(canvas);
+            requestAnimationFrame(() => {
+              resize();
+            });
+            if (host && typeof ResizeObserver !== "undefined") {
+              new ResizeObserver(() => {
+                resize();
+              }).observe(host);
+            }
+          }
+        }
+
+        const controls = shell.querySelector(".gba-controls");
+        if (!controls) return;
+        const activeTouches = new Map();
+
+        function pressDir(dir) { input[dir] = true; }
+        function releaseDir(dir) { input[dir] = false; }
+
+        function btnFromTouch(touch) {
+          const el = document.elementFromPoint(touch.clientX, touch.clientY);
+          if (!el) return null;
+          const btn = el.closest(".dpad-btn");
+          return btn && btn.dataset.dir ? btn : null;
+        }
+
+        controls.addEventListener("touchstart", (e) => {
+          e.preventDefault();
+          for (const touch of e.changedTouches) {
+            const btn = btnFromTouch(touch);
+            if (btn) {
+              activeTouches.set(touch.identifier, btn.dataset.dir);
+              btn.classList.add("active");
+              pressDir(btn.dataset.dir);
+            }
+          }
+        }, { passive: false });
+
+        controls.addEventListener("touchmove", (e) => {
+          e.preventDefault();
+          for (const touch of e.changedTouches) {
+            const prevDir = activeTouches.get(touch.identifier);
+            const btn = btnFromTouch(touch);
+            const newDir = btn ? btn.dataset.dir : null;
+            if (prevDir === newDir) continue;
+            if (newDir) {
+              if (prevDir) {
+                releaseDir(prevDir);
+                const prevBtn = controls.querySelector(`.dpad-${prevDir}`);
+                if (prevBtn) prevBtn.classList.remove("active");
+              }
+              activeTouches.set(touch.identifier, newDir);
+              btn.classList.add("active");
+              pressDir(newDir);
+            } else if (prevDir) {
+              /* Finger still down but not over a .dpad-btn (cross/center/gap). Chrome often
+                 fires this right after touchstart — releasing here caused a one-tile walk then pause. */
+              continue;
+            } else {
+              activeTouches.delete(touch.identifier);
+            }
+          }
+        }, { passive: false });
+
+        function handleEnd(e) {
+          for (const touch of e.changedTouches) {
+            const dir = activeTouches.get(touch.identifier);
+            if (dir) {
+              releaseDir(dir);
+              const btn = controls.querySelector(`.dpad-${dir}`);
+              if (btn) btn.classList.remove("active");
+              activeTouches.delete(touch.identifier);
+            }
+          }
+        }
+        controls.addEventListener("touchend", handleEnd);
+        controls.addEventListener("touchcancel", handleEnd);
+      })();
+
+      const SPRITES_BASE = `${VISUAL_ASSETS_ROOT}/characters/character_1/`;
+      const RED_FILES = {
+        up: {
+          1: "Character=Red, Steps=1, Orientation=↑ Back.png",
+          2: "Character=Red, Steps=2, Orientation=↑ Back.png",
+          3: "Character=Red, Steps=3, Orientation=↑ Back.png",
+          4: "Character=Red, Steps=4, Orientation=↑ Back.png",
+        },
+        down: {
+          1: "Character=Red, Steps=1, Orientation=↓ Front.png",
+          2: "Character=Red, Steps=2, Orientation=↓ Front.png",
+          3: "Character=Red, Steps=3, Orientation=↓ Front.png",
+          4: "Character=Red, Steps=4, Orientation=↓ Front.png",
+        },
+        left: {
+          1: "Character=Red, Steps=1, Orientation=_- Left.png",
+          2: "Character=Red, Steps=2, Orientation=_- Left.png",
+          3: "Character=Red, Steps=3, Orientation=_- Left.png",
+          4: "Character=Red, Steps=4, Orientation=_- Left.png",
+        },
+        right: {
+          1: "Character=Red, Steps=1, Orientation=-_ Right.png",
+          2: "Character=Red, Steps=2, Orientation=-_ Right.png",
+          3: "Character=Red, Steps=3, Orientation=-_ Right.png",
+          4: "Character=Red, Steps=4, Orientation=-_ Right.png",
+        },
+      };
+
+      const sprites = {
+        loaded: false,
+        byDir: { up: {}, down: {}, left: {}, right: {} },
+      };
+
+      const GRASS_TILE_PX = 32;
+      /** Camera zoom: 1 = no zoom, 1.25 = 25% closer, 2 = double zoom, etc. */
+      /* Camera zoom & mobile audio loudness: see js/ui-env.js (`UI` object). */
+
+      /**
+       * World tile coordinates can be negative on X: extra columns west of authored 0..MAP_CONTENT_X_MAX.
+       * `MAP_X_MIN` is the west edge (inclusive); `MAP_COLS` is total width in tiles.
+       */
+      const MAP_EXTRA_COLS_LEFT = 26;
+      const MAP_CONTENT_X_MAX = 44;
+      const MAP_X_MIN = -MAP_EXTRA_COLS_LEFT;
+      const MAP_X_MAX = MAP_CONTENT_X_MAX;
+      const MAP_Y_MIN = 0;
+      const MAP_COLS = MAP_X_MAX - MAP_X_MIN + 1;
+      /** Large walkable void band at the very top (editor / free-build space). */
+      const TOP_VOID_BUILD_ROWS = 65;
+      /** Walkable grass strip between void and mountain rim. */
+      const GRASS_ROWS_ABOVE_MOUNTAINS = 3;
+      /** World Y where authored terrain (below grass) begins — path, mountains, etc. */
+      const MAP_CONTENT_Y0 = TOP_VOID_BUILD_ROWS + GRASS_ROWS_ABOVE_MOUNTAINS;
+      const MAP_ROWS = 36 + MAP_CONTENT_Y0;
+      const WORLD_W = MAP_COLS * GRASS_TILE_PX;
+      const WORLD_H = MAP_ROWS * GRASS_TILE_PX;
+      const WORLD_PX_X0 = MAP_X_MIN * GRASS_TILE_PX;
+      const WORLD_PX_X1 = (MAP_X_MAX + 1) * GRASS_TILE_PX;
+
+      function tileInWorldBounds(tx, ty) {
+        return tx >= MAP_X_MIN && tx <= MAP_X_MAX && ty >= MAP_Y_MIN && ty < MAP_ROWS;
+      }
+
+      const T_EARTH = 0;
+      const T_GRASS = 1;
+      const T_FLOWER = 2;
+      const T_WALL = 3;
+      /** Brown mountain rim (blocks like wall). */
+      const T_MOUNTAIN = 4;
+      /** Walkable stair tiles (`stair/Stairs.png`) cut into the rim where the path meets it. */
+      const T_STAIRS = 5;
+      /** Walkable “empty” tile: no terrain art; same flat green as `drawBackground` (#58caaf). */
+      const T_VOID = 6;
+      /** Editor paint sentinel only — maps to `T_EARTH` + street band (not stored in `map`). */
+      const T_EARTH_STREET = 100;
+      /** Editor paint sentinel — drivable / car street (`street_car/` Swamp tiles); maps to `T_EARTH` + car lane. */
+      const T_EARTH_STREET_CAR = 101;
+      /** Map prop: `objects/Telescope.svg` drawn on the tile; blocks movement. */
+      const T_TELESCOPE = 102;
+      /** Map props: `vehicles/…` PNGs; same lane / underlay rules as telescope. */
+      const T_VEHICLE_BICYCLE_LEFT = 103;
+      const T_VEHICLE_BICYCLE_RIGHT = 104;
+      const T_VEHICLE_TRUCK = 105;
+      /** Log fence segments (`fence/…`); same overlay rules as telescope / vehicles. */
+      const T_FENCE_LOGS_LEFT = 106;
+      const T_FENCE_LOGS_RIGHT = 107;
+      const T_FENCE_LOGS_TOP_LEFT = 108;
+      const T_FENCE_LOGS_TOP_RIGHT = 109;
+      const T_FENCE_LOGS_BOTTOM_RIGHT = 110;
+      const T_FENCE_LOGS_BOTTOM_LEFT = 111;
+      const T_FENCE_LOGS_MIDDLE = 112;
+      /** Brown ledge prop (`ledge/…`); blocks movement; drawn bottom-aligned like other map objects. */
+      const T_LEDGE = 113;
+      /** Rock props (`rocks/*.png`); same bare-overlay rules as ledge — no path/street/car underlay. */
+      const T_ROCK_SMALL = 114;
+      const T_ROCK_MEDIUM = 115;
+      const T_ROCK_BIG = 116;
+      /** Path sign board (`objects/board.png`); drawn on `decorOverlays` over earth/path. */
+      const T_BOARD = 117;
+      /** Street lamppost (`objects/Lamppost.png`); tall decor with Pokémon-style depth vs player. */
+      const T_LAMPPOST = 118;
+
+      const VEHICLE_PNG_PATHS = {
+        [T_VEHICLE_BICYCLE_LEFT]: `${VISUAL_ASSETS_ROOT}/vehicles/Property 1=Bicycle Left.png`,
+        [T_VEHICLE_BICYCLE_RIGHT]: `${VISUAL_ASSETS_ROOT}/vehicles/Property 1=Bicycle Right.png`,
+        [T_VEHICLE_TRUCK]: `${VISUAL_ASSETS_ROOT}/vehicles/Property 1=Truck.png`,
+      };
+      const FENCE_LOG_PNG_PATHS = {
+        [T_FENCE_LOGS_LEFT]: `${VISUAL_ASSETS_ROOT}/fence/Position=← Left, Style=Logs.png`,
+        [T_FENCE_LOGS_RIGHT]: `${VISUAL_ASSETS_ROOT}/fence/Position=→ Right, Style=Logs.png`,
+        [T_FENCE_LOGS_TOP_LEFT]: `${VISUAL_ASSETS_ROOT}/fence/Position=↖︎ Top Left, Style=Logs.png`,
+        [T_FENCE_LOGS_TOP_RIGHT]: `${VISUAL_ASSETS_ROOT}/fence/Position=↗︎ Top Right, Style=Logs.png`,
+        [T_FENCE_LOGS_BOTTOM_RIGHT]: `${VISUAL_ASSETS_ROOT}/fence/Position=↘︎ Bottom Right, Style=Logs.png`,
+        [T_FENCE_LOGS_BOTTOM_LEFT]: `${VISUAL_ASSETS_ROOT}/fence/Position=↙ Bottom Left, Style=Logs.png`,
+        [T_FENCE_LOGS_MIDDLE]: `${VISUAL_ASSETS_ROOT}/fence/Position=︎— Middle, Style=Logs.png`,
+      };
+      const LEDGE_PNG_PATHS = {
+        [T_LEDGE]: `${VISUAL_ASSETS_ROOT}/ledge/Position=︎— Middle, Full=true, Terrain=None, Type=Brown.png`,
+      };
+      const ROCKS_PNG_PATHS = {
+        [T_ROCK_SMALL]: `${VISUAL_ASSETS_ROOT}/rocks/small.png`,
+        [T_ROCK_MEDIUM]: `${VISUAL_ASSETS_ROOT}/rocks/medium.png`,
+        [T_ROCK_BIG]: `${VISUAL_ASSETS_ROOT}/rocks/big.png`,
+      };
+      const BOARD_PNG_PATHS = {
+        [T_BOARD]: `${VISUAL_ASSETS_ROOT}/objects/board.png`,
+      };
+      const LAMPPOST_PNG_PATHS = {
+        [T_LAMPPOST]: `${VISUAL_ASSETS_ROOT}/objects/Lamppost.png`,
+      };
+      const OVERLAY_PNG_PATHS = { ...VEHICLE_PNG_PATHS, ...FENCE_LOG_PNG_PATHS, ...LEDGE_PNG_PATHS, ...ROCKS_PNG_PATHS };
+
+      /** Ledge + rocks: sit on top of whatever is drawn behind them; never assign earth lanes or lane art. */
+      function isTerrainBareOverlayCell(c) {
+        return c === T_LEDGE || ROCKS_PNG_PATHS[c] !== undefined;
+      }
+
+      /** Props on `decorOverlays` (bare terrain overlays + path objects). */
+      function isDecorOverlayCell(c) {
+        return isTerrainBareOverlayCell(c) || c === T_BOARD || c === T_LAMPPOST;
+      }
+
+      /** Tall decor split before/after Red by feet vs tile base (big rock, lamppost). */
+      function isTallDecorOverlay(dv) {
+        return dv === T_ROCK_BIG || dv === T_LAMPPOST;
+      }
+
+      function isFenceVariantId(v) {
+        return typeof v === "number" && FENCE_LOG_PNG_PATHS[v] !== undefined;
+      }
+
+      /** Telescope + vehicles live in `map[]`; log fences use `fenceOverlays`, ledge/rocks use `decorOverlays`. */
+      function isMapCellOverlayObject(c) {
+        return c === T_TELESCOPE || VEHICLE_PNG_PATHS[c] !== undefined;
+      }
+      function lineTiles(ax, ay, bx, by) {
+        const pts = [];
+        let x = ax;
+        let y = ay;
+        const dx = Math.abs(bx - ax);
+        const sx = ax < bx ? 1 : -1;
+        const dy = -Math.abs(by - ay);
+        const sy = ay < by ? 1 : -1;
+        let err = dx + dy;
+        while (true) {
+          pts.push([x, y]);
+          if (x === bx && y === by) break;
+          const e2 = 2 * err;
+          if (e2 >= dy) {
+            err += dy;
+            x += sx;
+          }
+          if (e2 <= dx) {
+            err += dx;
+            y += sy;
+          }
+        }
+        return pts;
+      }
+
+      /** Polyline vertices only — cells along segments are produced by orderedPolylineCells. */
+      const PATH_CENTER_POLYLINE = [
+        [24, 34 + MAP_CONTENT_Y0],
+        [24, 25 + MAP_CONTENT_Y0],
+        [40, 25 + MAP_CONTENT_Y0],
+        [40, 18 + MAP_CONTENT_Y0],
+        [9, 18 + MAP_CONTENT_Y0],
+        [9, 11 + MAP_CONTENT_Y0],
+        [38, 11 + MAP_CONTENT_Y0],
+        [38, 7 + MAP_CONTENT_Y0],
+        [12, 7 + MAP_CONTENT_Y0],
+        [12, 3 + MAP_CONTENT_Y0],
+        [18, 3 + MAP_CONTENT_Y0],
+        [18, 2 + MAP_CONTENT_Y0],
+      ];
+
+      function orderedPolylineCells(points) {
+        const out = [];
+        const seen = new Set();
+        for (let i = 0; i < points.length - 1; i++) {
+          const [ax, ay] = points[i];
+          const [bx, by] = points[i + 1];
+          for (const [x, y] of lineTiles(ax, ay, bx, by)) {
+            const k = `${x},${y}`;
+            if (!seen.has(k)) {
+              seen.add(k);
+              out.push([x, y]);
+            }
+          }
+        }
+        return out;
+      }
+
+      /**
+       * 2 tiles wide, one continuous ribbon: each spine cell contributes an adjacent pair sharing an edge.
+       * Vertical segments (N/S): (cx-1,cy) & (cx,cy). Horizontal segments (E/W): (cx,cy-1) & (cx,cy).
+       * Corners union strips from incoming + outgoing directions.
+       */
+      function expandPathCorridorTwoWide(ordered) {
+        const set = new Set();
+        function addSafe(tx, ty) {
+          if (tileInWorldBounds(tx, ty)) set.add(`${tx},${ty}`);
+        }
+        function addStrip(cx, cy, fx, fy) {
+          if (fx === 0 && fy === 0) return;
+          if (Math.abs(fx) > 0) {
+            addSafe(cx, cy - 1);
+            addSafe(cx, cy);
+          } else {
+            addSafe(cx - 1, cy);
+            addSafe(cx, cy);
+          }
+        }
+        for (let i = 0; i < ordered.length; i++) {
+          const curr = ordered[i];
+          const prev = ordered[i - 1] || curr;
+          const next = ordered[i + 1] || curr;
+          const tin = [Math.sign(curr[0] - prev[0]), Math.sign(curr[1] - prev[1])];
+          const tout = [Math.sign(next[0] - curr[0]), Math.sign(next[1] - curr[1])];
+          const dirs = [];
+          if (tin[0] !== 0 || tin[1] !== 0) dirs.push(tin);
+          if ((tout[0] !== tin[0] || tout[1] !== tin[1]) && (tout[0] !== 0 || tout[1] !== 0)) dirs.push(tout);
+          else if ((tin[0] === 0 && tin[1] === 0) && (tout[0] !== 0 || tout[1] !== 0)) dirs.push(tout);
+          const uniq = [];
+          for (const d of dirs) {
+            if (!uniq.some((u) => u[0] === d[0] && u[1] === d[1])) uniq.push(d);
+          }
+          for (const [fx, fy] of uniq) addStrip(curr[0], curr[1], fx, fy);
+        }
+        return set;
+      }
+
+      function buildMapData() {
+        const corridorRaw = expandPathCorridorTwoWide(orderedPolylineCells(PATH_CENTER_POLYLINE));
+
+        const grid = [];
+        const worldWidthTiles = MAP_X_MAX - MAP_X_MIN + 1;
+        for (let ty = 0; ty < MAP_ROWS; ty++) {
+          const row = [];
+          for (let ix = 0; ix < worldWidthTiles; ix++) {
+            const tx = MAP_X_MIN + ix;
+            if (ty < TOP_VOID_BUILD_ROWS) {
+              row.push(T_VOID);
+              continue;
+            }
+            if (ty < MAP_CONTENT_Y0) {
+              row.push(T_GRASS);
+              continue;
+            }
+            const topStreet = false;
+            const botStreet = ty >= MAP_ROWS - 2;
+            const wall = ty >= MAP_CONTENT_Y0 && ty < MAP_CONTENT_Y0 + 3 && tx >= 21 && tx <= 29;
+
+            let cell = T_GRASS;
+            if (wall) cell = T_WALL;
+            else if (topStreet || botStreet) cell = T_EARTH;
+            else if (corridorRaw.has(`${tx},${ty}`)) cell = T_EARTH;
+            else {
+              const leftSide = tx < MAP_X_MIN + worldWidthTiles * 0.4;
+              const rightSide = tx > MAP_X_MIN + worldWidthTiles * 0.6;
+              const h = (tx * 7919 + ty * 7297) % 100;
+              if ((leftSide || rightSide) && h < 13) cell = T_FLOWER;
+              else cell = T_GRASS;
+            }
+            row.push(cell);
+          }
+          grid.push(row);
+        }
+
+        const pathCells = new Set();
+        for (const k of corridorRaw) {
+          const [tx, ty] = k.split(",").map(Number);
+          if (!tileInWorldBounds(tx, ty)) continue;
+          if (grid[ty][tx - MAP_X_MIN] === T_EARTH) pathCells.add(k);
+        }
+
+        const streetCells = new Set();
+        for (let ty = 0; ty < MAP_ROWS; ty++) {
+          const topStreet = false;
+          const botStreet = ty >= MAP_ROWS - 2;
+          if (!topStreet && !botStreet) continue;
+          for (let ix = 0; ix < worldWidthTiles; ix++) {
+            const tx = MAP_X_MIN + ix;
+            if (grid[ty][ix] === T_EARTH) streetCells.add(`${tx},${ty}`);
+          }
+        }
+
+        const streetCarCells = new Set();
+
+        /** Full-width double row of mountain bottom tiles below the top grass pad. */
+        const TOP_MOUNTAIN_RIM_ROWS = 2;
+        const TOP_MOUNTAIN_RIM_TY0 = MAP_CONTENT_Y0;
+        for (let ty = TOP_MOUNTAIN_RIM_TY0; ty < TOP_MOUNTAIN_RIM_TY0 + TOP_MOUNTAIN_RIM_ROWS; ty++) {
+          for (let ix = 0; ix < worldWidthTiles; ix++) {
+            const tx = MAP_X_MIN + ix;
+            const k = `${tx},${ty}`;
+            for (const s of [pathCells, streetCells, streetCarCells]) s.delete(k);
+            grid[ty][ix] = T_MOUNTAIN;
+          }
+        }
+
+        /** 2×2 stairs: path spine ends below rim; 2-wide corridor uses x=17–18 on the rim. */
+        const STAIR_TX0 = 17;
+        const STAIR_TY0 = TOP_MOUNTAIN_RIM_TY0;
+        for (let dy = 0; dy < 2; dy++) {
+          for (let dx = 0; dx < 2; dx++) {
+            grid[STAIR_TY0 + dy][STAIR_TX0 + dx - MAP_X_MIN] = T_STAIRS;
+          }
+        }
+
+        /** Ledge to the right of the stairs: 9 wide × 2 down from rim (starts x=19). */
+        const LEDGE_TX0 = 19;
+        const LEDGE_TY0 = TOP_MOUNTAIN_RIM_TY0 + 2;
+        const LEDGE_W = 9;
+        const LEDGE_H = 2;
+        for (let dy = 0; dy < LEDGE_H; dy++) {
+          for (let dx = 0; dx < LEDGE_W; dx++) {
+            const tx = LEDGE_TX0 + dx;
+            const ty = LEDGE_TY0 + dy;
+            const k = `${tx},${ty}`;
+            for (const s of [pathCells, streetCells, streetCarCells]) s.delete(k);
+            grid[ty][tx - MAP_X_MIN] = T_MOUNTAIN;
+          }
+        }
+
+        /**
+         * Inverted brown corners (`mountain/corner/`) at rim ↔ ledge joins.
+         * Matches `reference_map/Ledge.svg`: a 2-tile-tall connector column at each ledge end.
+         */
+        const mountainCornerArt = new Map();
+        const mountainForceVariant = new Map();
+        const ledgeLeft = LEDGE_TX0;
+        const ledgeRight = LEDGE_TX0 + LEDGE_W - 1;
+        const ledgeTopY = LEDGE_TY0;
+        // Swapped: left/right connectors use the opposite corner variants.
+        mountainCornerArt.set(`${ledgeLeft},${ledgeTopY - 1}`, "tr");
+        mountainCornerArt.set(`${ledgeRight},${ledgeTopY - 1}`, "tl");
+        // Below each corner connector, force a vertical face tile.
+        mountainForceVariant.set(`${ledgeLeft},${ledgeTopY}`, "left");
+        mountainForceVariant.set(`${ledgeRight},${ledgeTopY}`, "right");
+
+        /** Full-width ridge below the grass/water band: brown `top` on every column (same face as car-underlay mountains). */
+        for (let ix = 0; ix < worldWidthTiles; ix++) {
+          const tx = MAP_X_MIN + ix;
+          const ty = MID_MOUNTAIN_TOP_RIDGE_TY;
+          const k = `${tx},${ty}`;
+          for (const s of [pathCells, streetCells, streetCarCells]) s.delete(k);
+          grid[ty][ix] = T_MOUNTAIN;
+          mountainForceVariant.set(k, "top");
+        }
+
+        /**
+         * Full-width drivable car-street band (rows 54–55): `T_EARTH` + `streetCarCells` only.
+         * Faces and `earthPaint` live in the edit bundle (`published-map.json` / localStorage), not here.
+         */
+        const STREET_CAR_BAND_TYS = [54, 55];
+        for (const ty of STREET_CAR_BAND_TYS) {
+          if (ty < 0 || ty >= MAP_ROWS) continue;
+          for (let ix = 0; ix < worldWidthTiles; ix++) {
+            const tx = MAP_X_MIN + ix;
+            const k = `${tx},${ty}`;
+            grid[ty][ix] = T_EARTH;
+            pathCells.delete(k);
+            streetCells.delete(k);
+            streetCarCells.add(k);
+          }
+        }
+
+        return {
+          grid,
+          pathCells,
+          streetCells,
+          streetCarCells,
+          mountainCornerArt,
+          mountainForceVariant,
+        };
+      }
+
+      let map;
+      let pathCells;
+      let streetCells;
+      let streetCarCells;
+      let mountainCornerArt;
+      let mountainForceVariant;
+
+      /** Map editor: click = paste target + 1-tile copy; ⌘/Ctrl+drag = copy region; ⌘/Ctrl+C / ⌘/Ctrl+V. */
+      
+      /** Rectangle to copy (⌘/Ctrl+drag, or 1×1 from plain click). */
+      
+      
+      /** Tile where ⌘/Ctrl+V places the clipboard’s bottom-right corner. */
+      
+      /** Shift `"tx,ty"` keys when `MAP_CONTENT_Y0` changes so paint edits stay aligned with terrain. */
+      function migrateMapEditKeysByDeltaY(obj, deltaY) {
+        if (!deltaY || typeof obj !== "object") return { ...obj };
+        const out = {};
+        for (const [k, v] of Object.entries(obj)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          const nty = ty + deltaY;
+          if (tx < MAP_X_MIN || tx > MAP_X_MAX || nty < MAP_Y_MIN || nty >= MAP_ROWS) continue;
+          out[`${tx},${nty}`] = v;
+        }
+        return out;
+      }
+
+      /** Drop keys outside the current map rectangle (e.g. after shrinking width/height). */
+      function pruneMapEditKeysToBounds(obj) {
+        if (!obj || typeof obj !== "object") return {};
+        const out = {};
+        for (const [k, v] of Object.entries(obj)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          if (tx < MAP_X_MIN || tx > MAP_X_MAX || ty < MAP_Y_MIN || ty >= MAP_ROWS) continue;
+          out[k] = v;
+        }
+        return out;
+      }
+
+      function mapEditBundleMeta() {
+        return { mapContentY0: MAP_CONTENT_Y0, mapCols: MAP_COLS, mapRows: MAP_ROWS, mapTileX0: MAP_X_MIN };
+      }
+
+      function mapEditLayerKeyCount(obj) {
+        return obj && typeof obj === "object" ? Object.keys(obj).length : 0;
+      }
+
+      function totalMapEditKeys(cells, mtn, street, earth, path, streetCar, fence, decor) {
+        const f = fence && typeof fence === "object" ? fence : {};
+        const d = decor && typeof decor === "object" ? decor : {};
+        return (
+          mapEditLayerKeyCount(cells) +
+          mapEditLayerKeyCount(mtn) +
+          mapEditLayerKeyCount(street) +
+          mapEditLayerKeyCount(earth) +
+          mapEditLayerKeyCount(path) +
+          mapEditLayerKeyCount(streetCar) +
+          mapEditLayerKeyCount(f) +
+          mapEditLayerKeyCount(d)
+        );
+      }
+
+      /**
+       * One-shot recovery: shift every saved paint key by `(MAP_CONTENT_Y0 - fromY0)` and stamp `meta.mapContentY0`.
+       * Example after the large top void was added: `__twinPeaksRemapStoredMapEdits(3)` then reload the page.
+       */
+      window.__twinPeaksRemapStoredMapEdits = function (fromY0) {
+        const n = Number(fromY0);
+        if (!Number.isFinite(n)) return false;
+        try {
+          const raw = localStorage.getItem(MAP_EDITS_STORAGE_KEY_V2);
+          if (!raw) return false;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return false;
+          const cells = parsed.cells && typeof parsed.cells === "object" ? { ...parsed.cells } : {};
+          const mtn = parsed.mtn && typeof parsed.mtn === "object" ? { ...parsed.mtn } : {};
+          const street = parsed.street && typeof parsed.street === "object" ? { ...parsed.street } : {};
+          const streetCar = parsed.streetCar && typeof parsed.streetCar === "object" ? { ...parsed.streetCar } : {};
+          const earth = parsed.earth && typeof parsed.earth === "object" ? { ...parsed.earth } : {};
+          const path = parsed.path && typeof parsed.path === "object" ? { ...parsed.path } : {};
+          const fence = parsed.fence && typeof parsed.fence === "object" ? { ...parsed.fence } : {};
+          const decor = parsed.decor && typeof parsed.decor === "object" ? { ...parsed.decor } : {};
+          const dy = MAP_CONTENT_Y0 - n;
+          const migrated = {
+            cells: migrateMapEditKeysByDeltaY(cells, dy),
+            mtn: migrateMapEditKeysByDeltaY(mtn, dy),
+            street: migrateMapEditKeysByDeltaY(street, dy),
+            streetCar: migrateMapEditKeysByDeltaY(streetCar, dy),
+            earth: migrateMapEditKeysByDeltaY(earth, dy),
+            path: migrateMapEditKeysByDeltaY(path, dy),
+            fence: migrateMapEditKeysByDeltaY(fence, dy),
+            decor: migrateMapEditKeysByDeltaY(decor, dy),
+            meta: mapEditBundleMeta(),
+          };
+          localStorage.setItem(MAP_EDITS_STORAGE_KEY_V2, JSON.stringify(migrated));
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      /**
+       * Normalize a stored edit bundle (migrate / prune to current `MAP_*` / `MAP_CONTENT_Y0`).
+       * @param {boolean} persistToLocalStorage — when true (browser dev saves), rewrite v2 storage after migration.
+       */
+      function normalizeEditBundleFromParsed(parsed, persistToLocalStorage) {
+        const empty = { cells: {}, mtn: {}, street: {}, streetCar: {}, earth: {}, path: {}, fence: {}, decor: {} };
+        if (!parsed || typeof parsed !== "object") return empty;
+        const cells = parsed.cells && typeof parsed.cells === "object" ? { ...parsed.cells } : {};
+        const legacyTelescope = parsed.telescope && typeof parsed.telescope === "object" ? parsed.telescope : {};
+        for (const [k, v] of Object.entries(legacyTelescope)) {
+          if (v === 1 || v === true) {
+            if (cells[k] === undefined || cells[k] === null) cells[k] = T_TELESCOPE;
+          }
+        }
+        const mtn = parsed.mtn && typeof parsed.mtn === "object" ? { ...parsed.mtn } : {};
+        const street = parsed.street && typeof parsed.street === "object" ? { ...parsed.street } : {};
+        const streetCar = parsed.streetCar && typeof parsed.streetCar === "object" ? { ...parsed.streetCar } : {};
+        const earth = parsed.earth && typeof parsed.earth === "object" ? { ...parsed.earth } : {};
+        const path = parsed.path && typeof parsed.path === "object" ? { ...parsed.path } : {};
+        const fenceSrc = parsed.fence && typeof parsed.fence === "object" ? { ...parsed.fence } : {};
+        let savedY0 = MAP_CONTENT_Y0;
+        if (Number.isFinite(parsed.meta?.mapContentY0)) {
+          savedY0 = parsed.meta.mapContentY0;
+        } else if (Number.isFinite(parsed.meta?.remapFromY0)) {
+          savedY0 = parsed.meta.remapFromY0;
+        }
+        const dy = MAP_CONTENT_Y0 - savedY0;
+        const mCells = migrateMapEditKeysByDeltaY(cells, dy);
+        const mMtn = migrateMapEditKeysByDeltaY(mtn, dy);
+        const mStreet = migrateMapEditKeysByDeltaY(street, dy);
+        const mStreetCar = migrateMapEditKeysByDeltaY(streetCar, dy);
+        const mEarth = migrateMapEditKeysByDeltaY(earth, dy);
+        const mPath = migrateMapEditKeysByDeltaY(path, dy);
+        const mFenceRaw = migrateMapEditKeysByDeltaY(fenceSrc, dy);
+        const decorSrc = parsed.decor && typeof parsed.decor === "object" ? { ...parsed.decor } : {};
+        const mDecorRaw = migrateMapEditKeysByDeltaY(decorSrc, dy);
+        let fenceInCells = 0;
+        let decorInCells = 0;
+        for (const v of Object.values(mCells)) {
+          if (isFenceVariantId(v)) fenceInCells++;
+          else if (isTerrainBareOverlayCell(v)) decorInCells++;
+        }
+        const keysBefore =
+          totalMapEditKeys(mCells, mMtn, mStreet, mEarth, mPath, mStreetCar, mFenceRaw, mDecorRaw) + fenceInCells + decorInCells;
+        const migrated = {
+          cells: pruneMapEditKeysToBounds(mCells),
+          mtn: pruneMapEditKeysToBounds(mMtn),
+          street: pruneMapEditKeysToBounds(mStreet),
+          streetCar: pruneMapEditKeysToBounds(mStreetCar),
+          earth: pruneMapEditKeysToBounds(mEarth),
+          path: pruneMapEditKeysToBounds(mPath),
+        };
+        const mergedFence = { ...pruneMapEditKeysToBounds(mFenceRaw) };
+        const mergedDecor = { ...pruneMapEditKeysToBounds(mDecorRaw) };
+        for (const [k, v] of Object.entries(migrated.cells)) {
+          if (isFenceVariantId(v)) {
+            if (mergedFence[k] === undefined || mergedFence[k] === null) mergedFence[k] = v;
+            delete migrated.cells[k];
+          } else if (isTerrainBareOverlayCell(v)) {
+            if (mergedDecor[k] === undefined || mergedDecor[k] === null) mergedDecor[k] = v;
+            delete migrated.cells[k];
+          }
+        }
+        migrated.fence = pruneMapEditKeysToBounds(mergedFence);
+        migrated.decor = pruneMapEditKeysToBounds(mergedDecor);
+        const keysAfter = totalMapEditKeys(
+          migrated.cells,
+          migrated.mtn,
+          migrated.street,
+          migrated.earth,
+          migrated.path,
+          migrated.streetCar,
+          migrated.fence,
+          migrated.decor,
+        );
+        const savedCols = parsed.meta?.mapCols;
+        const savedRows = parsed.meta?.mapRows;
+        const savedMapTileX0 = Number.isFinite(parsed.meta?.mapTileX0) ? parsed.meta.mapTileX0 : 0;
+        const metaDimsStale =
+          !Number.isFinite(savedCols) ||
+          !Number.isFinite(savedRows) ||
+          savedCols !== MAP_COLS ||
+          savedRows !== MAP_ROWS ||
+          savedMapTileX0 !== MAP_X_MIN;
+        const shouldPersist = persistToLocalStorage && (dy !== 0 || metaDimsStale || keysAfter < keysBefore);
+        if (shouldPersist) {
+          try {
+            localStorage.setItem(
+              MAP_EDITS_STORAGE_KEY_V2,
+              JSON.stringify({ ...migrated, meta: mapEditBundleMeta() }),
+            );
+          } catch {
+            // ignore
+          }
+        }
+        return migrated;
+      }
+
+      /** Per-layer shallow merge: `over` wins on duplicate keys (browser edits over shipped JSON). */
+      function mergeEditBundles(base, over) {
+        const b = base && typeof base === "object" ? base : {};
+        const o = over && typeof over === "object" ? over : {};
+        const pick = (x) => (x && typeof x === "object" ? x : {});
+        return {
+          cells: { ...pick(b.cells), ...pick(o.cells) },
+          mtn: { ...pick(b.mtn), ...pick(o.mtn) },
+          street: { ...pick(b.street), ...pick(o.street) },
+          streetCar: { ...pick(b.streetCar), ...pick(o.streetCar) },
+          earth: { ...pick(b.earth), ...pick(o.earth) },
+          path: { ...pick(b.path), ...pick(o.path) },
+          fence: { ...pick(b.fence), ...pick(o.fence) },
+          decor: { ...pick(b.decor), ...pick(o.decor) },
+        };
+      }
+
+      async function tryFetchPublishedMapBundle() {
+        try {
+          const res = await fetch(PUBLISHED_MAP_URL, { cache: "no-store" });
+          if (!res.ok) return null;
+          const parsed = await res.json();
+          if (!parsed || typeof parsed !== "object" || typeof parsed.cells !== "object") return null;
+          return normalizeEditBundleFromParsed(parsed, false);
+        } catch {
+          return null;
+        }
+      }
+
+      async function resolveInitialEditBundle() {
+        if (TWIN_PEAKS_EDITOR_MODE) {
+          window.__twinPeaksPublishedMapActive = false;
+          return loadMapEditsBundle();
+        }
+        const empty = { cells: {}, mtn: {}, street: {}, streetCar: {}, earth: {}, path: {}, fence: {}, decor: {} };
+        const pub = await tryFetchPublishedMapBundle();
+        const local = loadMapEditsBundle();
+        window.__twinPeaksPublishedMapActive = !!pub;
+        if (TWIN_PEAKS_PUBLISHED_ONLY) return pub || empty;
+        return mergeEditBundles(pub || empty, local);
+      }
+
+      function loadMapEditsBundle() {
+        try {
+          const raw2 = localStorage.getItem(MAP_EDITS_STORAGE_KEY_V2);
+          if (raw2) {
+            const parsed = JSON.parse(raw2);
+            if (!parsed || typeof parsed !== "object")
+              return { cells: {}, mtn: {}, street: {}, streetCar: {}, earth: {}, path: {}, fence: {}, decor: {} };
+            return normalizeEditBundleFromParsed(parsed, true);
+          }
+          const raw1 = localStorage.getItem(MAP_EDITS_STORAGE_KEY_V1);
+          if (raw1) {
+            const parsed = JSON.parse(raw1);
+            if (!parsed || typeof parsed !== "object") return { cells: {}, mtn: {}, street: {}, streetCar: {}, earth: {}, path: {}, fence: {}, decor: {} };
+            const cells = {};
+            for (const [k, v] of Object.entries(parsed)) {
+              if (typeof v === "number") cells[k] = v;
+            }
+            const savedY0 = 0;
+            const dy = MAP_CONTENT_Y0 - savedY0;
+            const mCells = migrateMapEditKeysByDeltaY(cells, dy);
+            const prunedCells = pruneMapEditKeysToBounds(mCells);
+            const migrated = {
+              cells: prunedCells,
+              mtn: {},
+              street: {},
+              streetCar: {},
+              earth: {},
+              path: {},
+              fence: {},
+              decor: {},
+            };
+            if (dy !== 0 && Object.keys(prunedCells).length) {
+              try {
+                localStorage.setItem(
+                  MAP_EDITS_STORAGE_KEY_V2,
+                  JSON.stringify({ ...migrated, meta: mapEditBundleMeta() }),
+                );
+              } catch {
+                // ignore
+              }
+            }
+            return migrated;
+          }
+        } catch {
+          // ignore
+        }
+        return { cells: {}, mtn: {}, street: {}, streetCar: {}, earth: {}, path: {}, fence: {}, decor: {} };
+      }
+
+      function saveMapEditsBundle(bundle) {
+        try {
+          const { meta: _ignored, ...rest } = bundle;
+          const full = { ...rest, meta: mapEditBundleMeta() };
+          localStorage.setItem(MAP_EDITS_STORAGE_KEY_V2, JSON.stringify(full));
+        } catch {
+          // ignore
+        }
+      }
+
+      const mapEdits = {};
+      const mountainEdits = {};
+      const streetArt = {};
+      const streetCarArt = {};
+      const earthPaint = {};
+      const pathArt = {};
+      /** `"tx,ty"` → log fence variant id (`T_FENCE_LOGS_*`); terrain stays in `map`. */
+      const fenceOverlays = {};
+      /** `"tx,ty"` → `T_LEDGE` | `T_ROCK_*` — drawn on top of terrain like fences; `map[]` keeps the base cell. */
+      const decorOverlays = {};
+
+      /**
+       * Exclusive earth lanes (path vs walkable street vs street car). New lane = one row here
+       * plus bundle keys / loaders — avoids N-way if/else chains across edit, undo, and prune.
+       */
+      function earthLaneRows() {
+        return [
+          { id: "path", cells: pathCells, art: pathArt },
+          { id: "street", cells: streetCells, art: streetArt, earthPaint: "street" },
+          { id: "car", cells: streetCarCells, art: streetCarArt, earthPaint: "car" },
+        ];
+      }
+
+      function normalizeEarthLaneId(earthLane) {
+        if (earthLane === "street") return "street";
+        if (earthLane === "car") return "car";
+        return "path";
+      }
+
+      /** Swamp car band (matches `STREET_CAR_BAND_TYS` in `buildMapData`). Used when painting car street with no angle. */
+      function defaultCarStreetFaceForTile(ty) {
+        if (ty === 54) return "top";
+        if (ty === 55) return "bottom";
+        return "center";
+      }
+
+      const BOARD_PATH_SIGN_TILE = { tx: 3, ty: 99 };
+      const BOARD_SIGN_READ_TILE = { tx: 3, ty: 100 };
+      const BOARD_SIGN_MESSAGE =
+        "Welcome to Twin Peaks, the best view point in San Francisco. This is a project of LEO.";
+
+      function ensureBoardPathSignPlaced() {
+        const { tx, ty } = BOARD_PATH_SIGN_TILE;
+        if (!tileInWorldBounds(tx, ty)) return;
+        decorOverlays[`${tx},${ty}`] = T_BOARD;
+      }
+
+      const LAMPPOST_TILES = [
+        { tx: -12, ty: 102 },
+        { tx: -2, ty: 102 },
+        { tx: 8, ty: 102 },
+        { tx: 18, ty: 102 },
+      ];
+
+      function ensureLamppostsPlaced() {
+        for (const { tx, ty } of LAMPPOST_TILES) {
+          if (!tileInWorldBounds(tx, ty)) continue;
+          decorOverlays[`${tx},${ty}`] = T_LAMPPOST;
+        }
+      }
+
+      function replaceEditBundleIntoGlobals(bundle) {
+        function clearThenAssign(target, src) {
+          for (const k of Object.keys(target)) delete target[k];
+          Object.assign(target, src && typeof src === "object" ? src : {});
+        }
+        clearThenAssign(mapEdits, bundle.cells);
+        clearThenAssign(mountainEdits, bundle.mtn);
+        clearThenAssign(streetArt, bundle.street);
+        clearThenAssign(streetCarArt, bundle.streetCar);
+        clearThenAssign(earthPaint, bundle.earth);
+        clearThenAssign(pathArt, bundle.path);
+        clearThenAssign(fenceOverlays, bundle.fence);
+        clearThenAssign(decorOverlays, bundle.decor);
+        ensureBoardPathSignPlaced();
+        ensureLamppostsPlaced();
+      }
+
+      const MAP_UNDO_DEPTH = 10;
+      const mapUndoStack = [];
+
+      function cloneMapGrid() {
+        return map.map((row) => row.slice());
+      }
+
+      function snapshotEditableWorld() {
+        return {
+          map: cloneMapGrid(),
+          mapEdits: { ...mapEdits },
+          mountainEdits: { ...mountainEdits },
+          streetArt: { ...streetArt },
+          streetCarArt: { ...streetCarArt },
+          earthPaint: { ...earthPaint },
+          pathArt: { ...pathArt },
+          fenceOverlays: { ...fenceOverlays },
+          decorOverlays: { ...decorOverlays },
+          earthLaneUndoCells: Object.fromEntries(earthLaneRows().map((L) => [L.id, Array.from(L.cells)])),
+          mountainCornerArt: Array.from(mountainCornerArt.entries()),
+          mountainForceVariant: Array.from(mountainForceVariant.entries()),
+        };
+      }
+
+      function restoreEditableWorld(snap) {
+        for (let ty = 0; ty < MAP_ROWS; ty++) {
+          for (let tx = 0; tx < MAP_COLS; tx++) {
+            map[ty][tx] = snap.map[ty][tx];
+          }
+        }
+        replaceEditBundleIntoGlobals({
+          cells: snap.mapEdits,
+          mtn: snap.mountainEdits,
+          street: snap.streetArt,
+          streetCar: snap.streetCarArt,
+          earth: snap.earthPaint,
+          path: snap.pathArt,
+          fence: snap.fenceOverlays || {},
+          decor: snap.decorOverlays || {},
+        });
+        if (snap.earthLaneUndoCells && typeof snap.earthLaneUndoCells === "object") {
+          for (const L of earthLaneRows()) {
+            L.cells.clear();
+            const arr = snap.earthLaneUndoCells[L.id];
+            if (Array.isArray(arr)) for (const k of arr) L.cells.add(k);
+          }
+        } else {
+          pathCells.clear();
+          for (const k of snap.pathCells || []) pathCells.add(k);
+          streetCells.clear();
+          for (const k of snap.streetCells || []) streetCells.add(k);
+          streetCarCells.clear();
+          if (Array.isArray(snap.streetCarCells)) {
+            for (const k of snap.streetCarCells) streetCarCells.add(k);
+          }
+        }
+        mountainCornerArt.clear();
+        for (const [key, val] of snap.mountainCornerArt) mountainCornerArt.set(key, val);
+        mountainForceVariant.clear();
+        for (const [key, val] of snap.mountainForceVariant) mountainForceVariant.set(key, val);
+      }
+
+      function pushUndoSnapshot() {
+        mapUndoStack.push(snapshotEditableWorld());
+        while (mapUndoStack.length > MAP_UNDO_DEPTH) mapUndoStack.shift();
+      }
+
+      function applyUndo() {
+        if (mapUndoStack.length === 0) return false;
+        const snap = mapUndoStack.pop();
+        restoreEditableWorld(snap);
+        saveMapEditsBundle({
+          cells: mapEdits,
+          mtn: mountainEdits,
+          street: streetArt,
+          streetCar: streetCarArt,
+          earth: earthPaint,
+          path: pathArt,
+          fence: fenceOverlays,
+          decor: decorOverlays,
+        });
+        return true;
+      }
+
+      /** `earthLane` `"path"` | `"street"` | `"car"` when `cell === T_EARTH`; ignored otherwise. Defaults to path. */
+      function applyOneCellEdit(tx, ty, cell, earthLane) {
+        if (!tileInWorldBounds(tx, ty)) return;
+        const k = `${tx},${ty}`;
+        const hadStreet = streetCells.has(k);
+        const hadCar = streetCarCells.has(k);
+        const hadPath = pathCells.has(k);
+        map[ty][tx - MAP_X_MIN] = cell;
+        if (cell === T_EARTH) {
+          const active = normalizeEarthLaneId(earthLane);
+          for (const L of earthLaneRows()) {
+            if (L.id === active) L.cells.add(k);
+            else L.cells.delete(k);
+          }
+        } else if (isMapCellOverlayObject(cell)) {
+          let active = "path";
+          if (earthPaint[k] === "street") active = "street";
+          else if (earthPaint[k] === "car") active = "car";
+          else if (hadStreet) active = "street";
+          else if (hadCar) active = "car";
+          else if (hadPath) active = "path";
+          const laneId = normalizeEarthLaneId(active);
+          for (const L of earthLaneRows()) {
+            if (L.id === laneId) L.cells.add(k);
+            else L.cells.delete(k);
+          }
+        } else if (cell !== T_MOUNTAIN) {
+          for (const L of earthLaneRows()) L.cells.delete(k);
+        }
+        if (cell !== T_MOUNTAIN) delete mountainEdits[k];
+        if (cell === T_EARTH) {
+          const active = normalizeEarthLaneId(earthLane);
+          for (const L of earthLaneRows()) {
+            if (L.id !== active) delete L.art[k];
+          }
+        } else if (isMapCellOverlayObject(cell)) {
+          let active = "path";
+          if (earthPaint[k] === "street") active = "street";
+          else if (earthPaint[k] === "car") active = "car";
+          else if (hadStreet) active = "street";
+          else if (hadCar) active = "car";
+          else if (hadPath) active = "path";
+          const laneId = normalizeEarthLaneId(active);
+          for (const L of earthLaneRows()) {
+            if (L.id !== laneId) delete L.art[k];
+          }
+        } else if (cell !== T_MOUNTAIN) {
+          for (const L of earthLaneRows()) delete L.art[k];
+        }
+      }
+
+      function normalizeEditorSelect(d) {
+        if (!d) return null;
+        return {
+          x0: Math.min(d.tx0, d.tx1),
+          x1: Math.max(d.tx0, d.tx1),
+          y0: Math.min(d.ty0, d.ty1),
+          y1: Math.max(d.ty0, d.ty1),
+        };
+      }
+
+      function snapshotMapCellForClipboard(tx, ty) {
+        const sk = `${tx},${ty}`;
+        return {
+          cell: map[ty][tx - MAP_X_MIN],
+          mapEdit: mapEdits[sk],
+          mtn: mountainEdits[sk],
+          street: streetArt[sk],
+          streetCar: streetCarArt[sk],
+          path: pathArt[sk],
+          earth: earthPaint[sk],
+          fenceVariant: fenceOverlays[sk],
+          decorVariant: decorOverlays[sk],
+          corner: mountainCornerArt.get(sk),
+          force: mountainForceVariant.get(sk),
+        };
+      }
+
+      function applySnapshotToMapCell(dx, dy, snap) {
+        const dk = `${dx},${dy}`;
+        let earthLane;
+        if (snap.cell === T_EARTH) {
+          if (snap.earth === "street") earthLane = "street";
+          else if (snap.earth === "car") earthLane = "car";
+          else earthLane = "path";
+        }
+        applyOneCellEdit(dx, dy, snap.cell, earthLane);
+        const mapEditStored = typeof snap.mapEdit === "number" ? snap.mapEdit : snap.cell;
+        if (isTerrainBareOverlayCell(mapEditStored)) {
+          decorOverlays[dk] = mapEditStored;
+          mapEdits[dk] = snap.cell;
+        } else {
+          mapEdits[dk] = mapEditStored;
+          if (typeof snap.decorVariant === "number" && isDecorOverlayCell(snap.decorVariant)) decorOverlays[dk] = snap.decorVariant;
+          else delete decorOverlays[dk];
+        }
+        if (typeof snap.mtn === "string" && snap.mtn) mountainEdits[dk] = snap.mtn;
+        else delete mountainEdits[dk];
+        if (typeof snap.street === "string" && snap.street) streetArt[dk] = snap.street;
+        else delete streetArt[dk];
+        if (typeof snap.streetCar === "string" && snap.streetCar) streetCarArt[dk] = snap.streetCar;
+        else delete streetCarArt[dk];
+        if (typeof snap.path === "string" && snap.path) pathArt[dk] = snap.path;
+        else delete pathArt[dk];
+        if (snap.earth === "street") earthPaint[dk] = "street";
+        else if (snap.earth === "car") earthPaint[dk] = "car";
+        else delete earthPaint[dk];
+        if (snap.corner) mountainCornerArt.set(dk, snap.corner);
+        else mountainCornerArt.delete(dk);
+        if (snap.force) mountainForceVariant.set(dk, snap.force);
+        else mountainForceVariant.delete(dk);
+        if (typeof snap.fenceVariant === "number" && isFenceVariantId(snap.fenceVariant)) fenceOverlays[dk] = snap.fenceVariant;
+        else delete fenceOverlays[dk];
+      }
+
+      function buildMapClipboardFromRect(r) {
+        const { x0, y0, x1, y1 } = r;
+        const w = x1 - x0 + 1;
+        const h = y1 - y0 + 1;
+        const tiles = [];
+        for (let ty = y0; ty <= y1; ty++) {
+          for (let tx = x0; tx <= x1; tx++) {
+            tiles.push(snapshotMapCellForClipboard(tx, ty));
+          }
+        }
+        return { w, h, x0, y0, x1, y1, tiles };
+      }
+
+      function pasteMapClipboardAt(anchorTx, anchorTy) {
+        if (!editorHud.mapClipboard) return false;
+        const { w, h, tiles } = editorHud.mapClipboard;
+        let i = 0;
+        for (let ry = 0; ry < h; ry++) {
+          for (let rx = 0; rx < w; rx++) {
+            const sx = anchorTx + rx;
+            const sy = anchorTy + ry;
+            if (tileInWorldBounds(sx, sy)) {
+              applySnapshotToMapCell(sx, sy, tiles[i]);
+            }
+            i++;
+          }
+        }
+        saveMapEditsBundle({
+          cells: mapEdits,
+          mtn: mountainEdits,
+          street: streetArt,
+          streetCar: streetCarArt,
+          earth: earthPaint,
+          path: pathArt,
+          fence: fenceOverlays,
+          decor: decorOverlays,
+        });
+        return true;
+      }
+
+      /** Paste so the clipboard’s bottom-right tile sits on (pasteTx, pasteTy). */
+      function pasteMapClipboardBottomRightAt(pasteTx, pasteTy) {
+        if (!editorHud.mapClipboard) return false;
+        const anchorTx = pasteTx - (editorHud.mapClipboard.w - 1);
+        const anchorTy = pasteTy - (editorHud.mapClipboard.h - 1);
+        return pasteMapClipboardAt(anchorTx, anchorTy);
+      }
+
+      function applyStartupMapEditLayers() {
+        for (const k of Object.keys(mapEdits)) {
+          const v = mapEdits[k];
+          if (isFenceVariantId(v)) {
+            fenceOverlays[k] = v;
+            delete mapEdits[k];
+          } else if (isDecorOverlayCell(v)) {
+            decorOverlays[k] = v;
+            delete mapEdits[k];
+          }
+        }
+        for (const k of Object.keys(mapEdits)) {
+          const v = mapEdits[k];
+          if (typeof v !== "number") continue;
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          let lane = "path";
+          if (v === T_EARTH) {
+            if (earthPaint[k] === "street") lane = "street";
+            else if (earthPaint[k] === "car") lane = "car";
+          }
+          applyOneCellEdit(tx, ty, v, v === T_EARTH ? lane : undefined);
+        }
+
+        /** `pathCells` / `street*` are not in the JSON bundle — rebuild from paint artifacts when underlay is visible (earth or invert-corner mountain). */
+        function resyncExclusiveEarthLanesFromBundle() {
+          for (const k of Object.keys(earthPaint)) {
+            const parts = k.split(",");
+            if (parts.length !== 2) continue;
+            const tx = Number(parts[0]);
+            const ty = Number(parts[1]);
+            if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) continue;
+            if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+            if (earthPaint[k] === "car") {
+              streetCarCells.add(k);
+              pathCells.delete(k);
+              streetCells.delete(k);
+            } else if (earthPaint[k] === "street") {
+              streetCells.add(k);
+              pathCells.delete(k);
+              streetCarCells.delete(k);
+            }
+          }
+          for (const k of Object.keys(pathArt)) {
+            const parts = k.split(",");
+            if (parts.length !== 2) continue;
+            const tx = Number(parts[0]);
+            const ty = Number(parts[1]);
+            if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) continue;
+            if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+            if (earthPaint[k] === "street" || earthPaint[k] === "car") continue;
+            pathCells.add(k);
+            streetCells.delete(k);
+            streetCarCells.delete(k);
+          }
+        }
+        resyncExclusiveEarthLanesFromBundle();
+
+        for (const k of Object.keys(mountainEdits)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          if (!tileInWorldBounds(tx, ty)) {
+            delete mountainEdits[k];
+            continue;
+          }
+          if (map[ty][tx - MAP_X_MIN] !== T_MOUNTAIN) delete mountainEdits[k];
+        }
+        const earthPaintValueToLane = new Map(
+          earthLaneRows()
+            .filter((L) => L.earthPaint)
+            .map((L) => [L.earthPaint, L]),
+        );
+        for (const k of Object.keys(earthPaint)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) {
+            delete earthPaint[k];
+            continue;
+          }
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) {
+            delete earthPaint[k];
+            continue;
+          }
+          const ep = earthPaint[k];
+          const lane = earthPaintValueToLane.get(ep);
+          if (!lane) delete earthPaint[k];
+          else if (!lane.cells.has(k)) delete earthPaint[k];
+          else if (!terrainAllowsEarthUnderlay(tx, ty)) delete earthPaint[k];
+        }
+        for (const L of earthLaneRows()) {
+          for (const k of Object.keys(L.art)) {
+            const parts = k.split(",");
+            if (parts.length !== 2) {
+              delete L.art[k];
+              continue;
+            }
+            const tx = Number(parts[0]);
+            const ty = Number(parts[1]);
+            if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) {
+              delete L.art[k];
+              continue;
+            }
+            if (!L.cells.has(k) || !terrainAllowsEarthUnderlay(tx, ty)) delete L.art[k];
+          }
+        }
+        for (const k of Object.keys(fenceOverlays)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) {
+            delete fenceOverlays[k];
+            continue;
+          }
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) {
+            delete fenceOverlays[k];
+            continue;
+          }
+          const fv = fenceOverlays[k];
+          if (!isFenceVariantId(fv)) delete fenceOverlays[k];
+        }
+        for (const k of Object.keys(decorOverlays)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) {
+            delete decorOverlays[k];
+            continue;
+          }
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) {
+            delete decorOverlays[k];
+            continue;
+          }
+          const dv = decorOverlays[k];
+          if (!isDecorOverlayCell(dv)) delete decorOverlays[k];
+        }
+      }
+
+      function tileCenterX(tx) {
+        return tx * GRASS_TILE_PX + GRASS_TILE_PX / 2;
+      }
+      function tileCenterY(ty) {
+        return ty * GRASS_TILE_PX + GRASS_TILE_PX / 2;
+      }
+
+      function cellAtTile(tx, ty) {
+        if (!tileInWorldBounds(tx, ty)) return T_WALL;
+        return map[ty][tx - MAP_X_MIN];
+      }
+
+      let telescopeViewOpen = false;
+      let telescopeScrollX = 0;
+      let telescopePanDir = 0;
+      let telescopePanoramaWidth = 0;
+      let telescopePanoramaMaxScroll = 0;
+      let telescopeDragPointerId = null;
+      let telescopeDragStartClientX = 0;
+      let telescopeDragStartScrollX = 0;
+      let telescopeBodyOverflowBefore = "";
+      const TELESCOPE_PAN_SPEED_PX = 300;
+      const telescopeOverlayEl = document.getElementById("telescope-overlay");
+      const telescopeViewportEl = document.getElementById("telescope-viewport");
+      const telescopePanoramaWrapEl = document.getElementById("telescope-panorama-wrap");
+      const telescopePanoramaImgEl = telescopePanoramaWrapEl
+        ? telescopePanoramaWrapEl.querySelector("img")
+        : null;
+
+      function playerCanUseTelescope() {
+        if (telescopeViewOpen || !map) return false;
+        if (player.moveT < 1) return false;
+        if (player.dir !== "down") return false;
+        return cellAtTile(player.tileX, player.tileY + 1) === T_TELESCOPE;
+      }
+
+      function layoutTelescopePanorama() {
+        if (!telescopeViewportEl || !telescopePanoramaWrapEl || !telescopePanoramaImgEl) return;
+        const nh = telescopePanoramaImgEl.naturalHeight;
+        const nw = telescopePanoramaImgEl.naturalWidth;
+        if (!nh || !nw) return;
+        const vSize = telescopeViewportEl.clientWidth;
+        const scale = vSize / nh;
+        telescopePanoramaWidth = nw * scale;
+        telescopePanoramaWrapEl.style.width = `${telescopePanoramaWidth}px`;
+        telescopePanoramaMaxScroll = Math.max(0, telescopePanoramaWidth - vSize);
+        telescopeScrollX = clamp(telescopeScrollX, 0, telescopePanoramaMaxScroll);
+        applyTelescopeScroll();
+      }
+
+      function applyTelescopeScroll() {
+        if (telescopePanoramaWrapEl) {
+          telescopePanoramaWrapEl.style.transform = `translateX(${-telescopeScrollX}px)`;
+        }
+      }
+
+      function updateTelescopePan(dt) {
+        if (!telescopeViewOpen) return;
+        if (telescopePanDir !== 0) {
+          telescopeScrollX = clamp(
+            telescopeScrollX + telescopePanDir * TELESCOPE_PAN_SPEED_PX * dt,
+            0,
+            telescopePanoramaMaxScroll,
+          );
+          applyTelescopeScroll();
+        }
+      }
+
+      function clearTelescopePanHoldState() {
+        telescopePanDir = 0;
+        document.getElementById("telescope-edge-left")?.classList.remove("telescope-edge--active");
+        document.getElementById("telescope-edge-right")?.classList.remove("telescope-edge--active");
+        document.getElementById("telescope-pan-btn-left")?.classList.remove("telescope-pan-btn--active");
+        document.getElementById("telescope-pan-btn-right")?.classList.remove("telescope-pan-btn--active");
+      }
+
+      function clearTelescopePanUiActive() {
+        clearTelescopePanHoldState();
+        telescopeViewportEl?.classList.remove("telescope-viewport--dragging");
+        telescopeDragPointerId = null;
+      }
+
+      function openTelescopeView() {
+        if (!telescopeOverlayEl || telescopeViewOpen) return;
+        telescopeViewOpen = true;
+        telescopeBodyOverflowBefore = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        telescopeOverlayEl.classList.remove("telescope-overlay--hidden");
+        telescopeOverlayEl.setAttribute("aria-hidden", "false");
+        layoutTelescopePanorama();
+        if (telescopePanoramaMaxScroll > 0) {
+          telescopeScrollX = telescopePanoramaMaxScroll * 0.38;
+          applyTelescopeScroll();
+        }
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function closeTelescopeView() {
+        if (!telescopeOverlayEl || !telescopeViewOpen) return;
+        telescopeViewOpen = false;
+        clearTelescopePanUiActive();
+        document.body.style.overflow = telescopeBodyOverflowBefore;
+        telescopeOverlayEl.classList.add("telescope-overlay--hidden");
+        telescopeOverlayEl.setAttribute("aria-hidden", "true");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      let messageBoxOpen = false;
+      let messageBoxFullText = "";
+      let messageBoxVisibleChars = 0;
+      let messageBoxCharTimer = 0;
+      let messageBoxTypingDone = false;
+      const MESSAGE_BOX_CHARS_PER_SEC = 42;
+      const messageBoxOverlayEl = document.getElementById("message-box-overlay");
+      const messageBoxTextEl = document.getElementById("message-box-text");
+      const messageBoxArrowEl = document.getElementById("message-box-arrow");
+
+      function playerCanReadBoardSign() {
+        if (messageBoxOpen || telescopeViewOpen || !map) return false;
+        if (player.moveT < 1) return false;
+        if (player.dir !== "up") return false;
+        const { tx, ty } = BOARD_SIGN_READ_TILE;
+        if (player.tileX !== tx || player.tileY !== ty) return false;
+        const { tx: bx, ty: by } = BOARD_PATH_SIGN_TILE;
+        return decorOverlays[`${bx},${by}`] === T_BOARD;
+      }
+
+      function openMessageBox(text) {
+        if (!messageBoxOverlayEl || messageBoxOpen) return;
+        messageBoxOpen = true;
+        messageBoxFullText = text;
+        messageBoxVisibleChars = 0;
+        messageBoxCharTimer = 0;
+        messageBoxTypingDone = false;
+        messageBoxOverlayEl.classList.remove("message-box--hidden");
+        messageBoxOverlayEl.setAttribute("aria-hidden", "false");
+        if (messageBoxTextEl) messageBoxTextEl.textContent = "";
+        messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function closeMessageBox() {
+        if (!messageBoxOverlayEl || !messageBoxOpen) return;
+        messageBoxOpen = false;
+        messageBoxOverlayEl.classList.add("message-box--hidden");
+        messageBoxOverlayEl.setAttribute("aria-hidden", "true");
+        messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function advanceMessageBox() {
+        if (!messageBoxOpen) return;
+        if (!messageBoxTypingDone) {
+          messageBoxVisibleChars = messageBoxFullText.length;
+          messageBoxTypingDone = true;
+          if (messageBoxTextEl) messageBoxTextEl.textContent = messageBoxFullText;
+          messageBoxArrowEl?.classList.add("msgbox-arrow--visible");
+          return;
+        }
+        closeMessageBox();
+      }
+
+      function updateMessageBox(dt) {
+        if (!messageBoxOpen || messageBoxTypingDone) return;
+        messageBoxCharTimer += dt;
+        const charsToShow = Math.min(
+          messageBoxFullText.length,
+          Math.floor(messageBoxCharTimer * MESSAGE_BOX_CHARS_PER_SEC),
+        );
+        if (charsToShow > messageBoxVisibleChars) {
+          messageBoxVisibleChars = charsToShow;
+          if (messageBoxTextEl) {
+            messageBoxTextEl.textContent = messageBoxFullText.slice(0, messageBoxVisibleChars);
+          }
+        }
+        if (messageBoxVisibleChars >= messageBoxFullText.length) {
+          messageBoxTypingDone = true;
+          messageBoxArrowEl?.classList.add("msgbox-arrow--visible");
+        }
+      }
+
+      function isMessageBoxAdvanceKey(key) {
+        return key === " " || key === "Enter" || key === "z" || key === "Z" || key === "x" || key === "X";
+      }
+
+      function initMessageBox() {
+        if (!messageBoxOverlayEl) return;
+        messageBoxOverlayEl.addEventListener("click", () => advanceMessageBox());
+        messageBoxOverlayEl.addEventListener(
+          "pointerdown",
+          (e) => {
+            if (!messageBoxOpen) return;
+            e.preventDefault();
+            advanceMessageBox();
+          },
+          { passive: false },
+        );
+      }
+
+      function initTelescopeView() {
+        if (!telescopeOverlayEl) return;
+        const closeBtn = document.getElementById("telescope-close");
+        const edgeLeft = document.getElementById("telescope-edge-left");
+        const edgeRight = document.getElementById("telescope-edge-right");
+        const panBtnLeft = document.getElementById("telescope-pan-btn-left");
+        const panBtnRight = document.getElementById("telescope-pan-btn-right");
+
+        closeBtn?.addEventListener("click", () => closeTelescopeView());
+
+        function bindPanControl(el, dir, activeClass) {
+          if (!el) return;
+          const start = (e) => {
+            if (e?.pointerType === "mouse" && e.button !== 0) return;
+            if (e?.cancelable) e.preventDefault();
+            telescopePanDir = dir;
+            el.classList.add(activeClass);
+          };
+          const stop = () => {
+            if (telescopePanDir === dir) telescopePanDir = 0;
+            el.classList.remove(activeClass);
+          };
+          el.addEventListener("mouseenter", start);
+          el.addEventListener("mouseleave", stop);
+          el.addEventListener("pointerdown", start);
+          el.addEventListener("pointerup", stop);
+          el.addEventListener("pointercancel", stop);
+          el.addEventListener("pointerleave", stop);
+        }
+        function bindPanEdge(el, dir) {
+          bindPanControl(el, dir, "telescope-edge--active");
+        }
+        bindPanEdge(edgeLeft, -1);
+        bindPanEdge(edgeRight, 1);
+        bindPanControl(panBtnLeft, -1, "telescope-pan-btn--active");
+        bindPanControl(panBtnRight, 1, "telescope-pan-btn--active");
+
+        if (telescopeViewportEl) {
+          telescopeViewportEl.addEventListener("pointerdown", (e) => {
+            if (!telescopeViewOpen) return;
+            if (e.pointerType === "mouse" && e.button !== 0) return;
+            if (e.target.closest(".telescope-edge, .telescope-close")) return;
+            telescopeDragPointerId = e.pointerId;
+            telescopeDragStartClientX = e.clientX;
+            telescopeDragStartScrollX = telescopeScrollX;
+            clearTelescopePanHoldState();
+            telescopeViewportEl.classList.add("telescope-viewport--dragging");
+            telescopeViewportEl.setPointerCapture(e.pointerId);
+            e.preventDefault();
+          });
+          telescopeViewportEl.addEventListener("pointermove", (e) => {
+            if (e.pointerId !== telescopeDragPointerId) return;
+            const dx = telescopeDragStartClientX - e.clientX;
+            telescopeScrollX = clamp(telescopeDragStartScrollX + dx, 0, telescopePanoramaMaxScroll);
+            applyTelescopeScroll();
+          });
+          const endDrag = (e) => {
+            if (e.pointerId !== telescopeDragPointerId) return;
+            telescopeDragPointerId = null;
+            telescopeViewportEl.classList.remove("telescope-viewport--dragging");
+            try {
+              telescopeViewportEl.releasePointerCapture(e.pointerId);
+            } catch {
+              /* already released */
+            }
+          };
+          telescopeViewportEl.addEventListener("pointerup", endDrag);
+          telescopeViewportEl.addEventListener("pointercancel", endDrag);
+        }
+
+        if (telescopePanoramaImgEl) {
+          if (telescopePanoramaImgEl.complete) layoutTelescopePanorama();
+          telescopePanoramaImgEl.addEventListener("load", layoutTelescopePanorama);
+        }
+        window.addEventListener("resize", () => {
+          if (telescopeViewOpen) layoutTelescopePanorama();
+        });
+      }
+
+      function findPlayerStart() {
+        /** Main spawn: path below the Twin Peaks board; facing down (see `player.dir`). */
+        const spawnTx = 3;
+        const spawnTy = 102;
+        if (tileInWorldBounds(spawnTx, spawnTy) && !tileBlocksMovement(spawnTx, spawnTy)) {
+          return { tx: spawnTx, ty: spawnTy };
+        }
+        /** Foot of top stair (tile below 2×2 `T_STAIRS` at x 17–18 on the rim). */
+        const footTx = 17;
+        const footTy = MAP_CONTENT_Y0 + 2;
+        if (tileInWorldBounds(footTx, footTy) && !tileBlocksMovement(footTx, footTy)) {
+          return { tx: footTx, ty: footTy };
+        }
+        for (let ty = MAP_ROWS - 2; ty < MAP_ROWS; ty++) {
+          for (let tx = 20; tx <= 28; tx++) {
+            if (cellAtTile(tx, ty) === T_EARTH && pathCells.has(`${tx},${ty}`)) return { tx, ty };
+          }
+        }
+        for (let ty = MAP_ROWS - 1; ty >= 0; ty--) {
+          for (let tx = MAP_X_MIN; tx <= MAP_X_MAX; tx++) {
+            if (cellAtTile(tx, ty) === T_EARTH) return { tx, ty };
+          }
+        }
+        return { tx: 24, ty: MAP_ROWS - 3 };
+      }
+
+      function loadImage(src) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = src;
+        });
+      }
+
+      async function loadSprites() {
+        const jobs = [];
+        for (const dir of ["up", "down", "left", "right"]) {
+          for (const step of [1, 2, 3, 4]) {
+            const filename = RED_FILES[dir][step];
+            const src = encodeURI(SPRITES_BASE + filename);
+            jobs.push(
+              loadImage(src).then((img) => {
+                sprites.byDir[dir][step] = img;
+              }),
+            );
+          }
+        }
+        await Promise.all(jobs);
+        sprites.loaded = true;
+      }
+
+      loadSprites().catch(() => {
+        sprites.loaded = false;
+      });
+
+      const sfxStepCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function resumeSfxContext() {
+        if (sfxStepCtx && sfxStepCtx.state === "suspended") sfxStepCtx.resume().catch(() => {});
+      }
+      let sfxGrassBuffer = null;
+      let sfxWalkBuffer = null;
+      fetch("sounds/joentnt-walk-on-grass-1-291984.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => sfxStepCtx.decodeAudioData(buf))
+        .then((decoded) => { sfxGrassBuffer = decoded; })
+        .catch(() => {});
+      fetch("sounds/normal_walk.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => sfxStepCtx.decodeAudioData(buf))
+        .then((decoded) => { sfxWalkBuffer = decoded; })
+        .catch(() => {});
+      const SFX_GRASS_STEP_VOL = 0.275 * UI.audioMult;
+      const SFX_WALK_STEP_VOL = 0.6 * UI.audioMult;
+      function playStepSound(buffer, volume) {
+        if (!buffer) return;
+        resumeSfxContext();
+        const source = sfxStepCtx.createBufferSource();
+        source.buffer = buffer;
+        const gain = sfxStepCtx.createGain();
+        gain.gain.value = volume;
+        source.connect(gain);
+        gain.connect(sfxStepCtx.destination);
+        source.start(0);
+      }
+
+      const windAmbienceAudio = new Audio("sounds/wind_normal.mp3");
+      windAmbienceAudio.loop = true;
+      windAmbienceAudio.preload = "auto";
+      windAmbienceAudio.volume = 0.28 * UI.audioMult;
+      const windStrongAmbienceAudio = new Audio("sounds/wind_strong.mp3");
+      windStrongAmbienceAudio.loop = true;
+      windStrongAmbienceAudio.preload = "auto";
+      windStrongAmbienceAudio.volume = 0;
+      [windAmbienceAudio, windStrongAmbienceAudio].forEach((a) => {
+        a.setAttribute("playsinline", "");
+        a.setAttribute("webkit-playsinline", "");
+      });
+      const WIND_STRONG_MAX_VOL = 0.22 * UI.audioMult;
+      const WIND_STRONG_FADE_SEC = 1.2;
+      const WIND_STRONG_FADE_SPEED = WIND_STRONG_MAX_VOL / WIND_STRONG_FADE_SEC;
+      let windStrongAmbiencePlaying = false;
+      let windAmbienceGestureSeen = false;
+      let audioUnlockListenersRemoved = false;
+      const _audioUnlockCap = { capture: true, passive: true };
+      function tryStartWindAmbience() {
+        windAmbienceAudio.play().catch(() => {});
+      }
+      function updateWindStrongAmbienceAudio(dt) {
+        if (!windAmbienceGestureSeen) return;
+        const target = windMode === "windy" ? WIND_STRONG_MAX_VOL : 0;
+        const vol = windStrongAmbienceAudio.volume;
+        if (vol < target) {
+          windStrongAmbienceAudio.volume = Math.min(target, vol + WIND_STRONG_FADE_SPEED * dt);
+        } else if (vol > target) {
+          windStrongAmbienceAudio.volume = Math.max(target, vol - WIND_STRONG_FADE_SPEED * dt);
+        }
+        if (target > 0 && !windStrongAmbiencePlaying) {
+          windStrongAmbienceAudio.play().catch(() => {});
+          windStrongAmbiencePlaying = true;
+        }
+        if (windStrongAmbienceAudio.volume <= 0.001 && target === 0 && windStrongAmbiencePlaying) {
+          windStrongAmbienceAudio.pause();
+          windStrongAmbienceAudio.currentTime = 0;
+          windStrongAmbienceAudio.volume = 0;
+          windStrongAmbiencePlaying = false;
+        }
+      }
+      function removeAudioUnlockListeners() {
+        if (audioUnlockListenersRemoved) return;
+        audioUnlockListenersRemoved = true;
+        window.removeEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        window.removeEventListener("keydown", unlockGameAudioFromUserGesture);
+        window.removeEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        window.removeEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      }
+      function unlockGameAudioFromUserGesture() {
+        if (windAmbienceGestureSeen) {
+          syncWindModeFromPlayer();
+          resumeSfxContext();
+          if (windAmbienceAudio.paused) tryStartWindAmbience();
+          if (windMode === "windy" && windStrongAmbienceAudio.paused) {
+            windStrongAmbienceAudio.play().catch(() => {});
+            windStrongAmbiencePlaying = true;
+          }
+          return;
+        }
+        windAmbienceGestureSeen = true;
+        resumeSfxContext();
+        tryStartWindAmbience();
+        syncWindModeFromPlayer();
+        updateWindStrongAmbienceAudio(0);
+        removeAudioUnlockListeners();
+      }
+      function reviveAmbienceAfterBackground() {
+        if (!windAmbienceGestureSeen) return;
+        syncWindModeFromPlayer();
+        resumeSfxContext();
+        tryStartWindAmbience();
+        if (windMode === "windy") {
+          windStrongAmbienceAudio.play().catch(() => {});
+          windStrongAmbiencePlaying = true;
+        }
+        updateWindStrongAmbienceAudio(0);
+      }
+      /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
+      function suspendGameAudioWhenLeavingPage() {
+        windAmbienceAudio.pause();
+        windStrongAmbienceAudio.pause();
+        windStrongAmbiencePlaying = false;
+        if (sfxStepCtx && sfxStepCtx.state !== "closed") {
+          sfxStepCtx.suspend().catch(() => {});
+        }
+      }
+      window.addEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      window.addEventListener("keydown", unlockGameAudioFromUserGesture);
+      window.addEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      window.addEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reviveAmbienceAfterBackground();
+        else suspendGameAudioWhenLeavingPage();
+      });
+      window.addEventListener("pagehide", suspendGameAudioWhenLeavingPage);
+      window.addEventListener("beforeunload", suspendGameAudioWhenLeavingPage);
+      window.addEventListener("pageshow", () => {
+        reviveAmbienceAfterBackground();
+      });
+      (function wireGbaControlsAudioUnlock() {
+        const c = document.querySelector(".gba-controls");
+        if (!c) return;
+        c.addEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        c.addEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      })();
+
+      const objectTelescope = { loaded: false, img: null };
+      loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/objects/Telescope.svg`))
+        .then((img) => {
+          objectTelescope.img = img;
+          objectTelescope.loaded = true;
+        })
+        .catch(() => {
+          objectTelescope.loaded = false;
+        });
+
+      const ALL_OVERLAY_BITMAP_PATHS = { ...OVERLAY_PNG_PATHS, ...BOARD_PNG_PATHS, ...LAMPPOST_PNG_PATHS };
+      const overlayBitmapImages = {};
+      for (const tid of Object.keys(ALL_OVERLAY_BITMAP_PATHS)) {
+        const id = Number(tid);
+        const src = ALL_OVERLAY_BITMAP_PATHS[id];
+        overlayBitmapImages[id] = { loaded: false, img: null };
+        loadImage(encodeURI(src))
+          .then((img) => {
+            overlayBitmapImages[id].img = img;
+            overlayBitmapImages[id].loaded = true;
+          })
+          .catch(() => {
+            overlayBitmapImages[id].loaded = false;
+          });
+      }
+
+      /** Full_grass = behind Red, Top_grass = in front of Red */
+      const grass = {
+        loaded: false,
+        back: null,
+        front: null,
+        backCache: null,
+        backCacheFrames: null,
+        frontCache: null,
+        frontCacheH: 0,
+      };
+
+      function rebuildGrassCaches() {
+        if (!grass.back || !grass.front) return;
+
+        // Rasterize animated grass backs at exported pixel size (no scale-to-tile).
+        const sourceFrames = grass.backFrames && grass.backFrames.length ? grass.backFrames : [grass.back];
+        const backFrames = [];
+        for (const src of sourceFrames) {
+          const sw = src.naturalWidth || 32;
+          const sh = src.naturalHeight || 32;
+          const backC = document.createElement("canvas");
+          backC.width = sw;
+          backC.height = sh;
+          const bctx = backC.getContext("2d");
+          bctx.imageSmoothingEnabled = false;
+          bctx.drawImage(src, 0, 0);
+          backFrames.push(backC);
+        }
+
+        const nw = grass.front.naturalWidth || 32;
+        const nh = grass.front.naturalHeight || 32;
+        const frontC = document.createElement("canvas");
+        frontC.width = nw;
+        frontC.height = nh;
+        const fctx = frontC.getContext("2d");
+        fctx.imageSmoothingEnabled = false;
+        fctx.drawImage(grass.front, 0, 0);
+
+        grass.backCacheFrames = backFrames;
+        grass.backCache = backFrames[0] || null;
+        grass.frontCache = frontC;
+        grass.frontCacheH = nh;
+      }
+
+      Promise.all([
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Full_grass.svg`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Top_grass.svg`)),
+        // Animate leaves grouped in SVG
+        loadSvgMultiGroupAnimatedFrames(
+          encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Full_grass.svg`),
+          ["Top_Leaf", "Top-left_leaf", "Left_leaf", "Top-right_leaf", "Right_Leaf"],
+          [
+            [0, 0],
+            [1, 0],
+            [0, 1],
+            [-1, 0],
+            [0, -1],
+            [0, 0],
+          ],
+          [
+            // Slightly different wobble per cluster so it feels organic
+            [
+              [0, 0],
+              [1, 0],
+              [0, 0],
+              [-1, 0],
+              [0, 0],
+              [0, 0],
+            ],
+            [
+              [0, 0],
+              [0, 1],
+              [0, 0],
+              [0, -1],
+              [0, 0],
+              [0, 0],
+            ],
+            [
+              [0, 0],
+              [1, 0],
+              [0, 1],
+              [-1, 0],
+              [0, -1],
+              [0, 0],
+            ],
+            [
+              [0, 0],
+              [1, 0],
+              [0, 0],
+              [-1, 0],
+              [0, 0],
+              [0, 0],
+            ],
+            [
+              [0, 0],
+              [-1, 0],
+              [0, 0],
+              [1, 0],
+              [0, 0],
+              [0, 0],
+            ],
+          ],
+        ),
+      ])
+        .then(([back, front, backFrames]) => {
+          grass.back = back;
+          grass.front = front;
+          grass.backFrames = backFrames;
+          rebuildGrassCaches();
+          grass.loaded = true;
+        })
+        .catch(() => {
+          grass.loaded = false;
+        });
+
+      /** Bottom_Flower = behind Red, Top_Flower = in front of Red */
+      const flower = {
+        loaded: false,
+        back: null,
+        front: null,
+        backFrames: null,
+        frontFrames: null,
+      };
+
+      Promise.all([
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Bottom_Flower.png`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Top_Flower.png`)),
+        // Bottom head: tiny “around” wobble, slower
+        loadSvgHeadAnimatedFrames(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Bottom_Flower.svg`), "Flower1_Head", [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [-1, 0],
+          [0, -1],
+          [0, 0],
+        ]),
+        // Top head: a bit more lively, still subtle and pixel-snapped
+        loadSvgHeadAnimatedFrames(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/Top_Flower.svg`), "Flower2_Head", [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 1],
+          [-1, 0],
+          [0, 0],
+        ]),
+      ])
+        .then(([back, front, backFrames, frontFrames]) => {
+          flower.back = back;
+          flower.front = front;
+          flower.backFrames = backFrames;
+          flower.frontFrames = frontFrames;
+          flower.loaded = true;
+        })
+        .catch(() => {
+          flower.loaded = false;
+        });
+
+      /** Path art (earth tiles bordering mountains): assets live under `earth/`. */
+      const pathGround = {
+        loaded: false,
+        byVariant: {},
+      };
+      const PATH_GROUND_FILES = {
+        center: "Type=Mountains, Position=⏺ Center, Invert=false.svg",
+        left: "Type=Mountains, Position=← Left, Invert=false.svg",
+        right: "Type=Mountains, Position=→ Right, Invert=false.svg",
+        top: "Type=Mountains, Position=\uFE0E↑ Top, Invert=false.svg",
+        bottom: "Type=Mountains, Position=↓ Bottom, Invert=false.svg",
+        tl: "Type=Mountains, Position=↖\uFE0E Top Left, Invert=false.svg",
+        tr: "Type=Mountains, Position=↗\uFE0E Top Right, Invert=false.svg",
+        bl: "Type=Mountains, Position=↙ Bottom Left, Invert=false.svg",
+        br: "Type=Mountains, Position=↘\uFE0E Bottom Right, Invert=false.svg",
+      };
+
+      /** Invert-corner path pieces (`earth/corners/`, PNG). Stored in `pathArt` as `e:tl`, etc. */
+      const pathGroundCorner = {
+        loaded: false,
+        byVariant: {},
+      };
+      const EARTH_CORNER_FILES = {
+        tl: "Type=Mountains, Position=↖\uFE0E Top Left, Invert=true.png",
+        tr: "Type=Mountains, Position=↗\uFE0E Top Right, Invert=true.png",
+        bl: "Type=Mountains, Position=↙ Bottom Left, Invert=true.png",
+        br: "Type=Mountains, Position=↘\uFE0E Bottom Right, Invert=true.png",
+      };
+
+      Promise.all(
+        Object.entries(PATH_GROUND_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/earth/${file}`)).then((img) => {
+            pathGround.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          pathGround.loaded = true;
+        })
+        .catch(() => {
+          pathGround.loaded = false;
+        });
+
+      Promise.all(
+        Object.entries(EARTH_CORNER_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/earth/corners/${file}`)).then((img) => {
+            pathGroundCorner.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          pathGroundCorner.loaded = true;
+        })
+        .catch(() => {
+          pathGroundCorner.loaded = false;
+        });
+
+      /** Street art (top/bottom bands): same autotile rules as path, Road variant filenames. */
+      const streetGround = {
+        loaded: false,
+        byVariant: {},
+      };
+      const STREET_GROUND_FILES = {
+        center: "Type=Road, Position=⏺ Center, Invert=false.svg",
+        left: "Type=Road, Position=← Left, Invert=false.svg",
+        right: "Type=Road, Position=→ Right, Invert=false.svg",
+        top: "Type=Road, Position=\uFE0E↑ Top, Invert=false.svg",
+        bottom: "Type=Road, Position=↓ Bottom, Invert=false.svg",
+        tl: "Type=Road, Position=↖\uFE0E Top Left, Invert=false.svg",
+        tr: "Type=Road, Position=↗\uFE0E Top Right, Invert=false.svg",
+        bl: "Type=Road, Position=↙ Bottom Left, Invert=false.svg",
+        br: "Type=Road, Position=↘\uFE0E Bottom Right, Invert=false.svg",
+      };
+
+      Promise.all(
+        Object.entries(STREET_GROUND_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/street/${file}`)).then((img) => {
+            streetGround.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          streetGround.loaded = true;
+        })
+        .catch(() => {
+          streetGround.loaded = false;
+        });
+
+      /** Invert-corner street pieces (`street/corners/`, PNG). Stored in `streetArt` as `s:tl`, etc. */
+      const streetGroundCorner = {
+        loaded: false,
+        byVariant: {},
+      };
+      const STREET_CORNER_FILES = {
+        tl: "Type=Road, Position=↖\uFE0E Top Left, Invert=true.png",
+        tr: "Type=Road, Position=↗\uFE0E Top Right, Invert=true.png",
+        bl: "Type=Road, Position=↙ Bottom Left, Invert=true.png",
+        br: "Type=Road, Position=↘\uFE0E Bottom Right, Invert=true.png",
+      };
+
+      Promise.all(
+        Object.entries(STREET_CORNER_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/street/corners/${file}`)).then((img) => {
+            streetGroundCorner.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          streetGroundCorner.loaded = true;
+        })
+        .catch(() => {
+          streetGroundCorner.loaded = false;
+        });
+
+      /** Car / drivable street (`street_car/` Swamp road). Same autotile keys as pedestrian street; stored in `streetCarArt`, corners as `sc:tl`, etc. */
+      const streetCarGround = {
+        loaded: false,
+        byVariant: {},
+      };
+      const STREET_CAR_GROUND_FILES = {
+        center: "Type=Swamp, Position=⏺ Center, Invert=false.png",
+        left: "Type=Swamp, Position=← Left, Invert=false.png",
+        right: "Type=Swamp, Position=→ Right, Invert=false.png",
+        top: "Type=Swamp, Position=\uFE0E↑ Top, Invert=false.png",
+        bottom: "Type=Swamp, Position=↓ Bottom, Invert=false.png",
+        tl: "Type=Swamp, Position=↖\uFE0E Top Left, Invert=false.png",
+        tr: "Type=Swamp, Position=↗\uFE0E Top Right, Invert=false.png",
+        bl: "Type=Swamp, Position=↙ Bottom Left, Invert=false.png",
+        br: "Type=Swamp, Position=↘\uFE0E Bottom Right, Invert=false.png",
+      };
+
+      Promise.all(
+        Object.entries(STREET_CAR_GROUND_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/street_car/${file}`)).then((img) => {
+            streetCarGround.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          streetCarGround.loaded = true;
+        })
+        .catch(() => {
+          streetCarGround.loaded = false;
+        });
+
+      const streetCarGroundCorner = {
+        loaded: false,
+        byVariant: {},
+      };
+      const STREET_CAR_CORNER_FILES = {
+        tl: "Type=Swamp, Position=↖\uFE0E Top Left, Invert=true.png",
+        tr: "Type=Swamp, Position=↗\uFE0E Top Right, Invert=true.png",
+        bl: "Type=Swamp, Position=↙ Bottom Left, Invert=true.png",
+        br: "Type=Swamp, Position=↘\uFE0E Bottom Right, Invert=true.png",
+      };
+
+      Promise.all(
+        Object.entries(STREET_CAR_CORNER_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/street_car/corners/${file}`)).then((img) => {
+            streetCarGroundCorner.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          streetCarGroundCorner.loaded = true;
+        })
+        .catch(() => {
+          streetCarGroundCorner.loaded = false;
+        });
+
+      const windSprites = { loaded: false, small: null, medium: null, large: null };
+      Promise.all([
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/wind/Wind_small.svg`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/wind/Wind_medium.svg`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/wind/Wind_large.svg`)),
+      ])
+        .then(([small, medium, large]) => {
+          windSprites.small = small;
+          windSprites.medium = medium;
+          windSprites.large = large;
+          windSprites.loaded = true;
+        })
+        .catch(() => {
+          windSprites.loaded = false;
+        });
+
+      const grassSplash = { loaded: false, img: null };
+      loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/grass_splash.svg`))
+        .then((img) => {
+          grassSplash.img = img;
+          grassSplash.loaded = true;
+        })
+        .catch(() => {
+          grassSplash.loaded = false;
+        });
+
+      /** Brown mountain PNG autotiles (`mountain/*.png`). Top rim rows use forced “bottom” art. */
+      const MOUNTAIN_BROWN_FILES = {
+        center: "Position=\u23FA Center, Type=Brown, Invert=false.png",
+        left: "Position=\u2190 Left, Type=Brown, Invert=false.png",
+        right: "Position=\u2192 Right, Type=Brown, Invert=false.png",
+        bottom: "Position=\u2193 Bottom, Type=Brown, Invert=false.png",
+        top: "Position=\uFE0E\u2191 Top, Type=Brown, Invert=false.png",
+        tl: "Position=\u2196\uFE0E Top Left, Type=Brown, Invert=false.png",
+        tr: "Position=\u2197\uFE0E Top Right, Type=Brown, Invert=false.png",
+        bl: "Position=\u2199 Bottom Left, Type=Brown, Invert=false.png",
+        br: "Position=\u2198\uFE0E Bottom Right, Type=Brown, Invert=false.png",
+      };
+
+      const mountainBrown = { loaded: false, byVariant: {} };
+      Promise.all(
+        Object.entries(MOUNTAIN_BROWN_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/mountain/${file}`)).then((img) => {
+            mountainBrown.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          mountainBrown.loaded = true;
+        })
+        .catch(() => {
+          mountainBrown.loaded = false;
+        });
+
+      const MOUNTAIN_CORNER_FILES = {
+        tl: "Position=\u2196\uFE0E Top Left, Type=Brown, Invert=true.png",
+        tr: "Position=\u2197\uFE0E Top Right, Type=Brown, Invert=true.png",
+        bl: "Position=\u2199 Bottom Left, Type=Brown, Invert=true.png",
+        br: "Position=\u2198\uFE0E Bottom Right, Type=Brown, Invert=true.png",
+      };
+
+      const mountainCorner = { loaded: false, byVariant: {} };
+      Promise.all(
+        Object.entries(MOUNTAIN_CORNER_FILES).map(([variant, file]) =>
+          loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/mountain/corner/${file}`)).then((img) => {
+            mountainCorner.byVariant[variant] = img;
+          }),
+        ),
+      )
+        .then(() => {
+          mountainCorner.loaded = true;
+        })
+        .catch(() => {
+          mountainCorner.loaded = false;
+        });
+
+      const stairTile = { loaded: false, img: null };
+      loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/stair/Stairs.png`))
+        .then((img) => {
+          stairTile.img = img;
+          stairTile.loaded = true;
+        })
+        .catch(() => {
+          stairTile.loaded = false;
+        });
+
+      const waterStage1 = { loaded: false, img: null };
+      loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/water/Stage=1.png`))
+        .then((img) => {
+          waterStage1.img = img;
+          waterStage1.loaded = true;
+        })
+        .catch(() => {
+          waterStage1.loaded = false;
+        });
+
+      function drawTopStairPatch(camX, camY, viewW, viewH) {
+        const img = stairTile.img;
+        const tw = GRASS_TILE_PX;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = Math.max(MAP_Y_MIN, ty0); ty <= Math.min(MAP_ROWS - 1, ty1); ty++) {
+          for (let tx = Math.max(MAP_X_MIN, tx0); tx <= Math.min(MAP_X_MAX, tx1); tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_STAIRS) continue;
+            const wx = tx * tw - camX;
+            const wy = ty * tw - camY;
+            if (img) {
+              const nw = img.naturalWidth || 32;
+              const nh = img.naturalHeight || 32;
+              if (wx > viewW + nw || wx + nw < -nw || wy > viewH + nh || wy + nh < -nh) continue;
+              ctx.drawImage(img, wx, wy);
+            } else {
+              if (wx > viewW + tw || wx + tw < -tw || wy > viewH + tw || wy + tw < -tw) continue;
+              ctx.fillStyle = "#c8ccd4";
+              ctx.fillRect(wx, wy, tw, tw);
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      /**
+       * Brown face key used for collision — explicit `mountainEdits` brown key,
+       * else no walk on procedural invert corners, else rim strip `bottom`, else `mountainForceVariant`,
+       * else fixed `bottom` (no neighbor autotile; paint Angle Center manually to walk).
+       */
+      function mountainBrownFaceKeyForCollision(tx, ty) {
+        const k = `${tx},${ty}`;
+        const paintMtn = mountainEdits[k];
+        if (typeof paintMtn === "string" && paintMtn && paintMtn !== "auto") {
+          if (paintMtn.startsWith("c:")) return null;
+          if (paintMtn.startsWith("b:")) {
+            const bk = paintMtn.slice(2);
+            return MOUNTAIN_BROWN_FILES.hasOwnProperty(bk) ? bk : null;
+          }
+          if (MOUNTAIN_BROWN_FILES.hasOwnProperty(paintMtn)) return paintMtn;
+          return null;
+        }
+        const topRimTy0 = MAP_CONTENT_Y0;
+        const topRimTy1 = MAP_CONTENT_Y0 + 1;
+        if (mountainCornerArt.get(k)) return null;
+        if (ty >= topRimTy0 && ty <= topRimTy1) return "bottom";
+        const forced = mountainForceVariant.get(k);
+        if (forced && MOUNTAIN_BROWN_FILES.hasOwnProperty(forced)) return forced;
+        return "bottom";
+      }
+
+      /** Walls block; mountains block unless resolved brown face is `center`. Log fences block while terrain shows through. */
+      function tileBlocksMovement(tx, ty) {
+        const c = cellAtTile(tx, ty);
+        const k = `${tx},${ty}`;
+        if (fenceOverlays[k] != null && isFenceVariantId(fenceOverlays[k])) return true;
+        if (decorOverlays[k] != null && isDecorOverlayCell(decorOverlays[k])) return true;
+        if (c === T_WALL || isMapCellOverlayObject(c)) return true;
+        if (c !== T_MOUNTAIN) return false;
+        return mountainBrownFaceKeyForCollision(tx, ty) !== "center";
+      }
+
+      /** Rim: top two mountain rows use “bottom” only; elsewhere use explicit paint or default brown `bottom` (no neighbor autotile). */
+      /** Brown row drawn before car street so the Swamp band (54–55) appears on top (`drawBrownMountains(..., { onlyTy })`). */
+      const MOUNTAIN_CAR_STREET_UNDERLAY_ROW = 53;
+      /** Full-width `top` mountain ridge; water fills tile rows with `ty` below this. */
+      const MID_MOUNTAIN_TOP_RIDGE_TY = 47;
+      /** Water fill ends this many tile rows north of the car-underlay row (legacy spacing; ridge row is authoritative). */
+      const WATER_BASE_ROWS_NORTH_OF_CAR_UNDERLAY = 8;
+
+      function drawBrownMountains(camX, camY, viewW, viewH, opts) {
+        opts = opts || {};
+        const onlyTy = Number.isFinite(opts.onlyTy) ? opts.onlyTy : null;
+        const skipTy = Number.isFinite(opts.skipTy) ? opts.skipTy : null;
+        const tw = GRASS_TILE_PX;
+        const topRimTy0 = MAP_CONTENT_Y0;
+        const topRimTy1 = MAP_CONTENT_Y0 + 1;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        const bottomImg = mountainBrown.byVariant.bottom;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = Math.max(MAP_Y_MIN, ty0); ty <= Math.min(MAP_ROWS - 1, ty1); ty++) {
+          if (onlyTy !== null && ty !== onlyTy) continue;
+          if (skipTy !== null && ty === skipTy) continue;
+          for (let tx = Math.max(MAP_X_MIN, tx0); tx <= Math.min(MAP_X_MAX, tx1); tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_MOUNTAIN) continue;
+            const wx = tx * tw - camX;
+            const wy = ty * tw - camY;
+            const k = `${tx},${ty}`;
+            const paintMtn = mountainEdits[k];
+            let img = null;
+            if (typeof paintMtn === "string" && paintMtn && paintMtn !== "auto") {
+              if (paintMtn.startsWith("c:")) {
+                const ck = paintMtn.slice(2);
+                if (mountainCorner.byVariant[ck]) img = mountainCorner.byVariant[ck];
+              } else if (paintMtn.startsWith("b:")) {
+                const bk = paintMtn.slice(2);
+                if (mountainBrown.byVariant[bk]) img = mountainBrown.byVariant[bk];
+              } else if (mountainBrown.byVariant[paintMtn]) {
+                img = mountainBrown.byVariant[paintMtn];
+              } else if (mountainCorner.byVariant[paintMtn]) {
+                img = mountainCorner.byVariant[paintMtn];
+              }
+            }
+            const cornerKey = mountainCornerArt.get(k);
+            const forced = mountainForceVariant.get(k);
+            if (!img && cornerKey && mountainCorner.byVariant[cornerKey]) {
+              img = mountainCorner.byVariant[cornerKey];
+            } else if (!img && ty >= topRimTy0 && ty <= topRimTy1) {
+              img = bottomImg;
+            } else if (!img && forced && mountainBrown.byVariant[forced]) {
+              img = mountainBrown.byVariant[forced];
+            } else if (!img && mountainBrown.loaded) {
+              img = mountainBrown.byVariant.bottom;
+            }
+            if (img) {
+              const nw = img.naturalWidth || 32;
+              const nh = img.naturalHeight || 32;
+              if (wx > viewW + nw || wx + nw < -nw || wy > viewH + nh || wy + nh < -nh) continue;
+              ctx.drawImage(img, wx, wy);
+            } else {
+              if (wx > viewW + tw || wx + tw < -tw || wy > viewH + tw || wy + tw < -tw) continue;
+              ctx.fillStyle = "rgba(90, 70, 110, 0.75)";
+              ctx.fillRect(wx, wy, tw, tw);
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function viewTileRange(camX, camY, viewW, viewH) {
+        const tx0 = Math.max(MAP_X_MIN, Math.floor(camX / GRASS_TILE_PX) - 1);
+        const ty0 = Math.max(MAP_Y_MIN, Math.floor(camY / GRASS_TILE_PX) - 1);
+        const tx1 = Math.min(MAP_X_MAX, Math.ceil((camX + viewW) / GRASS_TILE_PX));
+        const ty1 = Math.min(MAP_ROWS - 1, Math.ceil((camY + viewH) / GRASS_TILE_PX));
+        return { tx0, ty0, tx1, ty1 };
+      }
+
+      /** Brown diagonal faces (dropdown “TL”… under brown faces) — same keys exist on invert corners, but paint resolves to brown first. */
+      const MOUNTAIN_BROWN_DIAGONAL_KEYS = { tl: true, tr: true, bl: true, br: true };
+
+      /** Invert-corner (`c:…`), brown diagonal corner (`tl`/`tr`/… or `b:tl`), or procedural `mountainCornerArt` — these may show path/street/car underneath. */
+      function mountainTileShowsEarthUnderlay(tx, ty) {
+        if (map[ty][tx - MAP_X_MIN] !== T_MOUNTAIN) return false;
+        const k = `${tx},${ty}`;
+        const paintMtn = mountainEdits[k];
+        if (typeof paintMtn === "string" && paintMtn && paintMtn !== "auto") {
+          if (paintMtn.startsWith("c:")) {
+            const ck = paintMtn.slice(2);
+            if (MOUNTAIN_CORNER_FILES.hasOwnProperty(ck)) return true;
+          }
+          if (paintMtn.startsWith("b:")) {
+            const bk = paintMtn.slice(2);
+            if (MOUNTAIN_BROWN_DIAGONAL_KEYS[bk]) return true;
+          } else if (!paintMtn.startsWith("c:") && MOUNTAIN_BROWN_DIAGONAL_KEYS[paintMtn]) {
+            return MOUNTAIN_BROWN_FILES.hasOwnProperty(paintMtn);
+          }
+        }
+        const procCorner = mountainCornerArt.get(k);
+        return typeof procCorner === "string" && MOUNTAIN_CORNER_FILES.hasOwnProperty(procCorner);
+      }
+
+      /**
+       * Same face resolution as `drawBrownMountains` for whether the brown **Left** autotile is shown
+       * (matches street-car skipping solid mountain: no water underlay behind that face).
+       */
+      function mountainTileIsBrownLeftFace(tx, ty) {
+        if (map[ty][tx - MAP_X_MIN] !== T_MOUNTAIN) return false;
+        const k = `${tx},${ty}`;
+        const paintMtn = mountainEdits[k];
+        const topRimTy0 = MAP_CONTENT_Y0;
+        const topRimTy1 = MAP_CONTENT_Y0 + 1;
+        if (typeof paintMtn === "string" && paintMtn && paintMtn !== "auto") {
+          if (paintMtn.startsWith("c:")) return false;
+          if (paintMtn.startsWith("b:")) {
+            const bk = paintMtn.slice(2);
+            return bk === "left" && MOUNTAIN_BROWN_FILES.hasOwnProperty(bk);
+          }
+          if (mountainCorner.byVariant[paintMtn]) return false;
+          if (MOUNTAIN_BROWN_FILES.hasOwnProperty(paintMtn)) return paintMtn === "left";
+          return false;
+        }
+        const cornerKey = mountainCornerArt.get(k);
+        if (cornerKey && mountainCorner.byVariant[cornerKey]) return false;
+        if (ty >= topRimTy0 && ty <= topRimTy1) return false;
+        const forced = mountainForceVariant.get(k);
+        return forced === "left" && MOUNTAIN_BROWN_FILES.hasOwnProperty(forced);
+      }
+
+      /** Path / street / car underlay: `T_EARTH`, overlay map objects when in a lane set, or corner `T_MOUNTAIN`. Ledge/rocks use `decorOverlays`. */
+      function terrainAllowsEarthUnderlay(tx, ty) {
+        const k = `${tx},${ty}`;
+        if (decorOverlays[k] != null && isTerrainBareOverlayCell(decorOverlays[k])) return false;
+        const c = map[ty][tx - MAP_X_MIN];
+        if (c === T_EARTH) return true;
+        if (isMapCellOverlayObject(c)) {
+          return streetCells.has(k) || streetCarCells.has(k) || pathCells.has(k);
+        }
+        if (c === T_MOUNTAIN) return mountainTileShowsEarthUnderlay(tx, ty);
+        return false;
+      }
+
+      function drawStreetGround(camX, camY, viewW, viewH) {
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+
+        if (!streetGround.loaded || !streetGround.byVariant.center) {
+          ctx.fillStyle = "rgba(130, 125, 118, 0.45)";
+          for (let ty = ty0; ty <= ty1; ty++) {
+            for (let tx = tx0; tx <= tx1; tx++) {
+              if (!streetCells.has(`${tx},${ty}`)) continue;
+              if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+              const wx = tx * GRASS_TILE_PX - camX;
+              const wy = ty * GRASS_TILE_PX - camY;
+              ctx.fillRect(wx, wy, GRASS_TILE_PX, GRASS_TILE_PX);
+            }
+          }
+          return;
+        }
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (!streetCells.has(`${tx},${ty}`)) continue;
+            if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+            const k = `${tx},${ty}`;
+            const forced = streetArt[k];
+            let img = null;
+            if (typeof forced === "string" && forced && forced !== "auto") {
+              if (forced.startsWith("s:")) {
+                const sk = forced.slice(2);
+                if (streetGroundCorner.byVariant[sk]) img = streetGroundCorner.byVariant[sk];
+              } else if (streetGround.byVariant[forced]) {
+                img = streetGround.byVariant[forced];
+              }
+            }
+            if (!img) {
+              img = streetGround.byVariant.center;
+            }
+            if (!img) continue;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            const nw = img.naturalWidth || 32;
+            const nh = img.naturalHeight || 32;
+            if (wx > viewW + nw || wx + nw < -nw || wy > viewH + nh || wy + nh < -nh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawStreetCarGround(camX, camY, viewW, viewH) {
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+
+        if (!streetCarGround.loaded || !streetCarGround.byVariant.center) {
+          ctx.fillStyle = "rgba(95, 110, 125, 0.42)";
+          for (let ty = ty0; ty <= ty1; ty++) {
+            for (let tx = tx0; tx <= tx1; tx++) {
+              if (!streetCarCells.has(`${tx},${ty}`)) continue;
+              if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+              const wx = tx * GRASS_TILE_PX - camX;
+              const wy = ty * GRASS_TILE_PX - camY;
+              ctx.fillRect(wx, wy, GRASS_TILE_PX, GRASS_TILE_PX);
+            }
+          }
+          return;
+        }
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (!streetCarCells.has(`${tx},${ty}`)) continue;
+            if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+            const k = `${tx},${ty}`;
+            const forced = streetCarArt[k];
+            let img = null;
+            if (typeof forced === "string" && forced && forced !== "auto") {
+              if (forced.startsWith("sc:")) {
+                const sk = forced.slice(3);
+                if (streetCarGroundCorner.byVariant[sk]) img = streetCarGroundCorner.byVariant[sk];
+              } else if (streetCarGround.byVariant[forced]) {
+                img = streetCarGround.byVariant[forced];
+              }
+            }
+            if (!img) {
+              img = streetCarGround.byVariant.center;
+            }
+            if (!img) continue;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            const nw = img.naturalWidth || 32;
+            const nh = img.naturalHeight || 32;
+            if (wx > viewW + nw || wx + nw < -nw || wy > viewH + nh || wy + nh < -nh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawPathGround(camX, camY, viewW, viewH) {
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+
+        if (!pathGround.loaded || !pathGround.byVariant.center) {
+          ctx.fillStyle = "rgba(101, 212, 186, 0.35)";
+          for (let ty = ty0; ty <= ty1; ty++) {
+            for (let tx = tx0; tx <= tx1; tx++) {
+              if (!pathCells.has(`${tx},${ty}`)) continue;
+              if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+              const wx = tx * GRASS_TILE_PX - camX;
+              const wy = ty * GRASS_TILE_PX - camY;
+              ctx.fillRect(wx, wy, GRASS_TILE_PX, GRASS_TILE_PX);
+            }
+          }
+          return;
+        }
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (!pathCells.has(`${tx},${ty}`)) continue;
+            if (!terrainAllowsEarthUnderlay(tx, ty)) continue;
+            const k = `${tx},${ty}`;
+            const forced = pathArt[k];
+            let img = null;
+            if (typeof forced === "string" && forced && forced !== "auto") {
+              if (forced.startsWith("e:")) {
+                const ek = forced.slice(2);
+                if (pathGroundCorner.byVariant[ek]) img = pathGroundCorner.byVariant[ek];
+              } else if (pathGround.byVariant[forced]) {
+                img = pathGround.byVariant[forced];
+              }
+            }
+            if (!img) {
+              img = pathGround.byVariant.center;
+            }
+            if (!img) continue;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            const nw = img.naturalWidth || 32;
+            const nh = img.naturalHeight || 32;
+            if (wx > viewW + nw || wx + nw < -nw || wy > viewH + nh || wy + nh < -nh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawWallTiles(camX, camY, viewW, viewH) {
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_WALL) continue;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            ctx.fillStyle = "#5c5563";
+            ctx.fillRect(wx, wy, GRASS_TILE_PX, GRASS_TILE_PX);
+            ctx.strokeStyle = "rgba(0,0,0,0.2)";
+            ctx.strokeRect(wx + 0.5, wy + 0.5, GRASS_TILE_PX - 1, GRASS_TILE_PX - 1);
+          }
+        }
+      }
+
+      function drawMapObjectTiles(camX, camY, viewW, viewH) {
+        const tw = GRASS_TILE_PX;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            const c = map[ty][tx - MAP_X_MIN];
+            let img = null;
+            if (c === T_TELESCOPE && objectTelescope.loaded && objectTelescope.img) img = objectTelescope.img;
+            else if (
+              VEHICLE_PNG_PATHS[c] !== undefined &&
+              overlayBitmapImages[c] &&
+              overlayBitmapImages[c].loaded &&
+              overlayBitmapImages[c].img
+            )
+              img = overlayBitmapImages[c].img;
+            if (!img) continue;
+            const wx = tx * tw - camX;
+            const wy = ty * tw - camY;
+            const nw = img.naturalWidth || 32;
+            const nh = img.naturalHeight || 32;
+            const dx = wx + (tw - nw) * 0.5;
+            const dy = wy + tw - nh;
+            if (dx + nw < 0 || dx > viewW || dy + nh < 0 || dy > viewH) continue;
+            ctx.drawImage(img, dx, dy);
+          }
+        }
+        ctx.restore();
+      }
+
+      /** Log fences sit on `fenceOverlays`; terrain in `map` draws underneath (PNG alpha, no fill). */
+      function drawFenceOverlayTiles(camX, camY, viewW, viewH) {
+        const tw = GRASS_TILE_PX;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (const k of Object.keys(fenceOverlays)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          if (tx < tx0 || tx > tx1 || ty < ty0 || ty > ty1) continue;
+          const fv = fenceOverlays[k];
+          const slot = overlayBitmapImages[fv];
+          if (!slot || !slot.loaded || !slot.img) continue;
+          const img = slot.img;
+          const wx = tx * tw - camX;
+          const wy = ty * tw - camY;
+          const nw = img.naturalWidth || 32;
+          const nh = img.naturalHeight || 32;
+          const dx = wx + (tw - nw) * 0.5;
+          const dy = wy + tw - nh;
+          if (dx + nw < 0 || dx > viewW || dy + nh < 0 || dy > viewH) continue;
+          ctx.drawImage(img, dx, dy);
+        }
+        ctx.restore();
+      }
+
+      function playerFeetWorldY() {
+        return player.y + GRASS_TILE_PX / 2 - 2;
+      }
+
+      function decorOverlayFeetWorldY(ty) {
+        return (ty + 1) * GRASS_TILE_PX;
+      }
+
+      /** Large rock draws in front of Red when his feet are north of the rock base (Pokémon-style depth). */
+      function bigRockDrawsInFrontOfPlayer(ty) {
+        return playerFeetWorldY() < decorOverlayFeetWorldY(ty);
+      }
+
+      /** Ledge / rocks sit on `decorOverlays`; terrain in `map` draws underneath (PNG alpha). */
+      function drawDecorOverlayTiles(camX, camY, viewW, viewH, shouldDraw) {
+        const tw = GRASS_TILE_PX;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (const k of Object.keys(decorOverlays)) {
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) continue;
+          if (tx < tx0 || tx > tx1 || ty < ty0 || ty > ty1) continue;
+          const dv = decorOverlays[k];
+          if (!isDecorOverlayCell(dv)) continue;
+          if (shouldDraw && !shouldDraw(tx, ty, dv)) continue;
+          const slot = overlayBitmapImages[dv];
+          if (!slot || !slot.loaded || !slot.img) continue;
+          const img = slot.img;
+          const wx = tx * tw - camX;
+          const wy = ty * tw - camY;
+          const nw = img.naturalWidth || 32;
+          const nh = img.naturalHeight || 32;
+          const dx = wx + (tw - nw) * 0.5;
+          const dy = wy + tw - nh;
+          if (dx + nw < 0 || dx > viewW || dy + nh < 0 || dy > viewH) continue;
+          ctx.drawImage(img, dx, dy);
+        }
+        ctx.restore();
+      }
+
+      function decorOverlayDrawBeforePlayer(tx, ty, dv) {
+        if (isTallDecorOverlay(dv) && bigRockDrawsInFrontOfPlayer(ty)) return false;
+        return true;
+      }
+
+      function decorOverlayDrawAfterPlayer(tx, ty, dv) {
+        return isTallDecorOverlay(dv) && bigRockDrawsInFrontOfPlayer(ty);
+      }
+
+      /** Ledge / board / small & medium rocks — not split around the player. */
+      function decorOverlayDrawAllExceptBigRock(tx, ty, dv) {
+        return !isTallDecorOverlay(dv);
+      }
+
+      /** Tall decor in the “before Red” pass (player south of base). Drawn after grass/flowers so flora z-order does not flip when Red moves. */
+      function decorBigRockBeforePlayerOnly(tx, ty, dv) {
+        return isTallDecorOverlay(dv) && decorOverlayDrawBeforePlayer(tx, ty, dv);
+      }
+
+      /** Bottom-of-path signpost (sketch). */
+      function drawSignpost(camX, camY) {
+        const tx = 26;
+        const ty = 33 + TOP_VOID_BUILD_ROWS;
+        const wx = tx * GRASS_TILE_PX - camX + GRASS_TILE_PX * 0.35;
+        const wy = ty * GRASS_TILE_PX - camY + GRASS_TILE_PX * 0.15;
+        ctx.fillStyle = "#6b5344";
+        ctx.fillRect(wx + GRASS_TILE_PX * 0.12, wy + GRASS_TILE_PX * 0.35, GRASS_TILE_PX * 0.08, GRASS_TILE_PX * 0.55);
+        ctx.fillStyle = "#c4a574";
+        ctx.fillRect(wx, wy, GRASS_TILE_PX * 0.32, GRASS_TILE_PX * 0.28);
+      }
+
+      /** True when any wind gust sprite overlaps this grass tile. */
+      function grassWindOverlapsTile(tx, ty) {
+        if (!windGusts.length) return false;
+        const tileL = tx * GRASS_TILE_PX;
+        const tileT = ty * GRASS_TILE_PX;
+        const tileR = tileL + GRASS_TILE_PX;
+        const tileB = tileT + GRASS_TILE_PX;
+        for (let i = 0; i < windGusts.length; i++) {
+          const s = windGusts[i];
+          const l = s.x;
+          const r = s.x + s.dw;
+          const tTop = s.y;
+          const b = s.y + s.dh;
+          if (r > tileL && l < tileR && b > tileT && tTop < tileB) return true;
+        }
+        return false;
+      }
+
+      function touchGrassTilesUnderWind() {
+        if (!windGusts.length) return;
+        for (let i = 0; i < windGusts.length; i++) {
+          const s = windGusts[i];
+          const l = s.x;
+          const r = s.x + s.dw;
+          const tTop = s.y;
+          const b = s.y + s.dh;
+          const tx0 = clamp(Math.floor(l / GRASS_TILE_PX), MAP_X_MIN, MAP_X_MAX);
+          const tx1 = clamp(Math.floor(r / GRASS_TILE_PX), MAP_X_MIN, MAP_X_MAX);
+          const ty0 = clamp(Math.floor(tTop / GRASS_TILE_PX), MAP_Y_MIN, MAP_ROWS - 1);
+          const ty1 = clamp(Math.floor(b / GRASS_TILE_PX), MAP_Y_MIN, MAP_ROWS - 1);
+          for (let ty = ty0; ty <= ty1; ty++) {
+            for (let tx = tx0; tx <= tx1; tx++) {
+              if (map[ty][tx - MAP_X_MIN] !== T_GRASS) continue;
+              const tileL = tx * GRASS_TILE_PX;
+              const tileT = ty * GRASS_TILE_PX;
+              const tileR = tileL + GRASS_TILE_PX;
+              const tileB = tileT + GRASS_TILE_PX;
+              if (r > tileL && l < tileR && b > tileT && tTop < tileB) {
+                grassWindLastHit.set(`${tx},${ty}`, worldTime);
+              }
+            }
+          }
+        }
+      }
+
+      function pruneGrassWindLastHit() {
+        const cutoff = worldTime - GRASS_WIND_RUSTLE_TAIL_SEC - 0.25;
+        for (const [k, t] of grassWindLastHit) {
+          if (t < cutoff) grassWindLastHit.delete(k);
+        }
+      }
+
+      function pruneGrassStepRustleLastHit() {
+        const cutoff = worldTime - GRASS_STEP_RUSTLE_SEC - 0.25;
+        for (const [k, t] of grassStepRustleLastHit) {
+          if (t < cutoff) grassStepRustleLastHit.delete(k);
+        }
+      }
+
+      function grassLeavesRustleAfterWind(tx, ty) {
+        if (grassWindOverlapsTile(tx, ty)) return true;
+        const key = `${tx},${ty}`;
+        const stepLast = grassStepRustleLastHit.get(key);
+        if (stepLast !== undefined && worldTime - stepLast <= GRASS_STEP_RUSTLE_SEC) return true;
+        const last = grassWindLastHit.get(key);
+        return last !== undefined && worldTime - last <= GRASS_WIND_RUSTLE_TAIL_SEC;
+      }
+
+      function drawGrassBackPatch(camX, camY, viewW, viewH) {
+        if (!grass.loaded || !grass.back) return;
+        const fiRustle = grassRustleFrameIndex(1.05) % 6;
+
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_GRASS) continue;
+            const fi = grassLeavesRustleAfterWind(tx, ty) ? fiRustle : 0;
+            const img = (grass.backCacheFrames && grass.backCacheFrames[fi]) || grass.backCache || grass.back;
+            const wx = tx * GRASS_TILE_PX;
+            const wy = ty * GRASS_TILE_PX;
+            const dx = wx - camX;
+            const dy = wy - camY;
+            const nw = img.naturalWidth || img.width || 32;
+            const nh = img.naturalHeight || img.height || 32;
+            if (dx > viewW + nw || dx + nw < -nw || dy > viewH + nh || dy + nh < -nh) continue;
+            ctx.drawImage(img, dx, dy);
+          }
+        }
+        ctx.restore();
+      }
+
+      /** Top_grass strip anchored to bottom of tile (native pixel size). */
+      function drawGrassFrontAtWorld(camX, camY, wx, wy) {
+        if (!grass.loaded || !grass.front) return;
+        const img = grass.frontCache || grass.front;
+        const nw = img.naturalWidth || img.width || 32;
+        const nh = img.naturalHeight || img.height || 32;
+        const dx = wx - camX;
+        const dy = wy - camY + (GRASS_TILE_PX - nh);
+        ctx.drawImage(img, dx, dy);
+      }
+
+      function drawGrassFrontPatchAll(camX, camY, viewW, viewH) {
+        if (!grass.loaded || !grass.front) return;
+
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_GRASS) continue;
+            drawGrassFrontAtWorld(camX, camY, tx * GRASS_TILE_PX, ty * GRASS_TILE_PX);
+          }
+        }
+      }
+
+      function drawGrassFrontPatchExcept(camX, camY, viewW, viewH, skipTy, skipTx) {
+        if (!grass.loaded || !grass.front) return;
+
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_GRASS) continue;
+            if (ty === skipTy && tx === skipTx) continue;
+            drawGrassFrontAtWorld(camX, camY, tx * GRASS_TILE_PX, ty * GRASS_TILE_PX);
+          }
+        }
+      }
+
+      function drawGrassFrontAtTile(camX, camY, tileX, tileY) {
+        if (!grass.loaded || !grass.front) return;
+        if (!tileInWorldBounds(tileX, tileY)) return;
+        if (map[tileY][tileX - MAP_X_MIN] !== T_GRASS) return;
+        drawGrassFrontAtWorld(camX, camY, tileX * GRASS_TILE_PX, tileY * GRASS_TILE_PX);
+      }
+
+      function drawFlowerBackPatch(camX, camY, viewW, viewH) {
+        if (!flower.loaded || !flower.back) return;
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_FLOWER) continue;
+            const fi = flowerRustleStep(tx, ty, 1.2) % 6;
+            const img = (flower.backFrames && flower.backFrames[fi]) || flower.back;
+            const bw = img.naturalWidth || 32;
+            const bh = img.naturalHeight || 32;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            if (wx > viewW + bw || wx + bw < -bw || wy > viewH + bh || wy + bh < -bh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawFlowerFrontPatchAll(camX, camY, viewW, viewH) {
+        if (!flower.loaded || !flower.front) return;
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_FLOWER) continue;
+            const fi = flowerRustleStep(tx, ty, 0.95) % 6;
+            const img = (flower.frontFrames && flower.frontFrames[fi]) || flower.front;
+            const fw = img.naturalWidth || 32;
+            const fh = img.naturalHeight || 32;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            if (wx > viewW + fw || wx + fw < -fw || wy > viewH + fh || wy + fh < -fh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawFlowerFrontPatchExcept(camX, camY, viewW, viewH, skipTy, skipTx) {
+        if (!flower.loaded || !flower.front) return;
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        for (let ty = ty0; ty <= ty1; ty++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            if (map[ty][tx - MAP_X_MIN] !== T_FLOWER) continue;
+            if (ty === skipTy && tx === skipTx) continue;
+            const fi = flowerRustleStep(tx, ty, 0.95) % 6;
+            const img = (flower.frontFrames && flower.frontFrames[fi]) || flower.front;
+            const fw = img.naturalWidth || 32;
+            const fh = img.naturalHeight || 32;
+            const wx = tx * GRASS_TILE_PX - camX;
+            const wy = ty * GRASS_TILE_PX - camY;
+            if (wx > viewW + fw || wx + fw < -fw || wy > viewH + fh || wy + fh < -fh) continue;
+            ctx.drawImage(img, wx, wy);
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawFlowerFrontAtTile(camX, camY, tileX, tileY) {
+        if (!flower.loaded || !flower.front) return;
+        if (!tileInWorldBounds(tileX, tileY)) return;
+        if (map[tileY][tileX - MAP_X_MIN] !== T_FLOWER) return;
+        const fi = flowerRustleStep(tileX, tileY, 0.95) % 6;
+        const img = (flower.frontFrames && flower.frontFrames[fi]) || flower.front;
+        const fw = img.naturalWidth || 32;
+        const fh = img.naturalHeight || 32;
+        const wx = tileX * GRASS_TILE_PX - camX;
+        const wy = tileY * GRASS_TILE_PX - camY;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, wx, wy);
+        ctx.restore();
+      }
+
+      function drawBackground(camX, camY, viewW, viewH) {
+        // Base earth color (flat for now).
+        ctx.fillStyle = "#58caaf";
+        ctx.fillRect(0, 0, viewW, viewH);
+      }
+
+      /** Full tile water under terrain north of `MID_MOUNTAIN_TOP_RIDGE_TY`; mountains/grass/path/street draw on top. */
+      function drawWaterBaseNorthOfCarUnderlayRow(camX, camY, viewW, viewH) {
+        const tw = GRASS_TILE_PX;
+        const tyMaxExclusive = MID_MOUNTAIN_TOP_RIDGE_TY;
+        const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
+        const txStart = Math.max(MAP_X_MIN, tx0);
+        const txEnd = Math.min(MAP_X_MAX, tx1);
+        const tyStart = Math.max(MAP_Y_MIN, ty0);
+        const tyEnd = Math.min(tyMaxExclusive - 1, ty1);
+        if (tyStart > tyEnd || txStart > txEnd) return;
+        const img = waterStage1.img;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        if (img && waterStage1.loaded) {
+          for (let ty = tyStart; ty <= tyEnd; ty++) {
+            for (let tx = txStart; tx <= txEnd; tx++) {
+              if (map[ty][tx - MAP_X_MIN] === T_MOUNTAIN && mountainTileIsBrownLeftFace(tx, ty)) continue;
+              const wx = tx * tw - camX;
+              const wy = ty * tw - camY;
+              if (wx > viewW + tw || wx + tw < -tw || wy > viewH + tw || wy + tw < -tw) continue;
+              ctx.drawImage(img, wx, wy, tw, tw);
+            }
+          }
+        } else {
+          ctx.fillStyle = "#3a8ec9";
+          for (let ty = tyStart; ty <= tyEnd; ty++) {
+            for (let tx = txStart; tx <= txEnd; tx++) {
+              if (map[ty][tx - MAP_X_MIN] === T_MOUNTAIN && mountainTileIsBrownLeftFace(tx, ty)) continue;
+              const wx = tx * tw - camX;
+              const wy = ty * tw - camY;
+              if (wx > viewW + tw || wx + tw < -tw || wy > viewH + tw || wy + tw < -tw) continue;
+              ctx.fillRect(wx, wy, tw, tw);
+            }
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawPlayer(screenX, screenY) {
+        if (!sprites.loaded) {
+          // Fallback: simple dot if sprites fail to load.
+          ctx.fillStyle = "#2f2b3a";
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, player.r, 0, Math.PI * 2);
+          ctx.fill();
+          return;
+        }
+
+        const frame = player.walkFrame;
+        const img = sprites.byDir[player.dir][frame] || sprites.byDir[player.dir][1];
+        if (!img) return;
+
+        const nh = img.naturalHeight || 1;
+        const nw = img.naturalWidth || 1;
+        // Exported PNG size (no scaling). Feet near bottom of tile; player (x,y) is tile center.
+        const feetY = screenY + GRASS_TILE_PX / 2 - 2;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, Math.round(screenX - nw / 2), Math.round(feetY - nh));
+        ctx.restore();
+      }
+
+      function getCamera() {
+        const rect = canvas.getBoundingClientRect();
+        const screenW = rect.width;
+        const screenH = rect.height;
+        const viewW = screenW / UI.cameraZoom;
+        const viewH = screenH / UI.cameraZoom;
+        const worldMinX = WORLD_PX_X0;
+        const worldSpanX = WORLD_PX_X1 - WORLD_PX_X0;
+        let camX;
+        if (viewW >= worldSpanX) {
+          camX = worldMinX - (viewW - worldSpanX) / 2;
+        } else {
+          camX = clamp(player.x - viewW / 2, worldMinX, WORLD_PX_X1 - viewW);
+        }
+        const worldHpx = WORLD_H;
+        let camY;
+        if (viewH >= worldHpx) {
+          camY = -(viewH - worldHpx) / 2;
+        } else {
+          camY = clamp(player.y - viewH / 2, 0, worldHpx - viewH);
+        }
+        return { viewW, viewH, camX, camY, screenW, screenH };
+      }
+
+      function screenToTile(clientX, clientY, camX, camY) {
+        const r = canvas.getBoundingClientRect();
+        const sx = (clientX - r.left) / UI.cameraZoom;
+        const sy = (clientY - r.top) / UI.cameraZoom;
+        const wx = camX + sx;
+        const wy = camY + sy;
+        const tx = Math.floor(wx / GRASS_TILE_PX);
+        const ty = Math.floor(wy / GRASS_TILE_PX);
+        return { tx, ty };
+      }
+
+      /** Spread gust heights across the map so moving vertically still crosses wind. */
+      function windPickDistinctLanes(howMany, laneCount) {
+        const n = Math.min(howMany, laneCount);
+        const ix = [];
+        for (let i = 0; i < laneCount; i++) ix.push(i);
+        for (let i = ix.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const t = ix[i];
+          ix[i] = ix[j];
+          ix[j] = t;
+        }
+        return ix.slice(0, n);
+      }
+
+      function windYForLane(laneIndex, laneCount, dh) {
+        const usable = Math.max(1, WORLD_H - dh);
+        const lo = (laneIndex / laneCount) * usable;
+        const hi = ((laneIndex + 1) / laneCount) * usable;
+        return clamp(lo + Math.random() * Math.max(3, hi - lo), 0, usable);
+      }
+
+      /** World-space gusts (east of map → west). Optional `{ variant, spawnEastExtra, laneIndex, laneCount }`. */
+      function spawnWindGust(opts) {
+        opts = opts || {};
+        if (!windSprites.loaded) return false;
+
+        let variant = opts.variant;
+        if (!variant) {
+          variant = windMode === "normal" ? "small" : Math.random() < 0.5 ? "medium" : "large";
+        }
+
+        const img = windSprites[variant];
+        if (!img) return false;
+
+        const nw = img.naturalWidth || 1;
+        const nh = img.naturalHeight || 1;
+        const dw = nw;
+        const dh = nh;
+
+        const eastOff = (opts.spawnEastExtra || 0) + 24 + Math.random() * 240;
+        const startX = WORLD_PX_X1 + eastOff;
+        const yMinBound = opts.yMin != null ? opts.yMin : 0;
+        const yMaxBound = opts.yMax != null ? opts.yMax : Math.max(0, WORLD_H - dh);
+        let y;
+        if (opts.laneIndex !== undefined && opts.laneCount !== undefined) {
+          const usable = Math.max(1, yMaxBound - yMinBound);
+          const lo = yMinBound + (opts.laneIndex / opts.laneCount) * usable;
+          const hi = yMinBound + ((opts.laneIndex + 1) / opts.laneCount) * usable;
+          y = clamp(lo + Math.random() * Math.max(3, hi - lo), yMinBound, yMaxBound);
+        } else {
+          y = clamp(
+            yMinBound + Math.random() * Math.max(1, yMaxBound - yMinBound),
+            yMinBound,
+            yMaxBound,
+          );
+        }
+
+        const vx =
+          windMode === "windy"
+            ? -(285 + Math.random() * 155)
+            : -(220 + Math.random() * 120);
+        const totalTravelPx = startX - WORLD_PX_X0 + dw + 120 + Math.random() * 140;
+
+        windGusts.push({
+          variant,
+          startX,
+          x: startX,
+          y,
+          vx,
+          dw,
+          dh,
+          totalTravelPx,
+        });
+        return true;
+      }
+
+      function updateWind(dt) {
+        for (let i = windGusts.length - 1; i >= 0; i--) {
+          const s = windGusts[i];
+          s.x += s.vx * dt;
+          const dist = s.startX - s.x;
+          if (dist >= s.totalTravelPx || s.x + s.dw < WORLD_PX_X0 - 80) windGusts.splice(i, 1);
+        }
+      }
+
+      function drawWind(camX, camY, viewW, viewH) {
+        if (!windGusts.length || !windSprites.loaded) return;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let i = 0; i < windGusts.length; i++) {
+          const s = windGusts[i];
+          const img = windSprites[s.variant];
+          if (!img) continue;
+
+          const sx = Math.round(s.x - camX);
+          const sy = Math.round(s.y - camY);
+          if (sx > viewW + 200 || sx + s.dw < -200) continue;
+
+          ctx.globalAlpha = WIND_PEAK_ALPHA;
+          ctx.drawImage(img, sx, sy);
+        }
+        ctx.restore();
+      }
+
+      function step(dt) {
+        if (telescopeViewOpen) {
+          updateTelescopePan(dt);
+          return;
+        }
+        if (messageBoxOpen) {
+          updateMessageBox(dt);
+          return;
+        }
+
+        const prevMoveT = player.moveT;
+
+        const isMoving = player.moveT < 1;
+
+        // Start a new tile-step if idle and any direction is pressed.
+        if (!isMoving) {
+          if (input.up && playerCanReadBoardSign()) {
+            openMessageBox(BOARD_SIGN_MESSAGE);
+            input.up = false;
+          } else if (input.down && playerCanUseTelescope()) {
+            openTelescopeView();
+            input.down = false;
+          } else {
+          let dir = null;
+          if (input.left) dir = "left";
+          else if (input.right) dir = "right";
+          else if (input.up) dir = "up";
+          else if (input.down) dir = "down";
+
+          if (dir) {
+            let nx = player.tileX;
+            let ny = player.tileY;
+            if (dir === "left") nx -= 1;
+            if (dir === "right") nx += 1;
+            if (dir === "up") ny -= 1;
+            if (dir === "down") ny += 1;
+
+            nx = clamp(nx, MAP_X_MIN, MAP_X_MAX);
+            ny = clamp(ny, MAP_Y_MIN, MAP_ROWS - 1);
+
+            if (tileBlocksMovement(nx, ny)) {
+              player.dir = dir;
+            } else if (nx !== player.tileX || ny !== player.tileY) {
+              player.dir = dir;
+              player.fromTileX = player.tileX;
+              player.fromTileY = player.tileY;
+              player.toTileX = nx;
+              player.toTileY = ny;
+              player.tileX = nx;
+              player.tileY = ny;
+              player.moveT = 0;
+              const stepCell = cellAtTile(nx, ny);
+              if (stepCell === T_GRASS) playStepSound(sfxGrassBuffer, SFX_GRASS_STEP_VOL);
+              else playStepSound(sfxWalkBuffer, SFX_WALK_STEP_VOL);
+            } else {
+              player.dir = dir;
+            }
+          }
+          }
+        }
+
+        // Advance movement tween.
+        const dur = input.run ? player.moveDuration / player.runMultiplier : player.moveDuration;
+        if (player.moveT < 1) player.moveT = Math.min(1, player.moveT + dt / Math.max(0.001, dur));
+
+        if (
+          prevMoveT < 1 &&
+          player.moveT === 1 &&
+          cellAtTile(player.tileX, player.tileY) === T_GRASS
+        ) {
+          grassSplashes.push({
+            tileX: player.tileX,
+            tileY: player.tileY,
+            age: 0,
+            duration: GRASS_SPLASH_DURATION_SEC,
+          });
+          while (grassSplashes.length > 10) grassSplashes.shift();
+          grassStepRustleLastHit.set(`${player.tileX},${player.tileY}`, worldTime);
+        }
+
+        const ease = player.moveT;
+
+        const fx = tileCenterX(player.fromTileX);
+        const fy = tileCenterY(player.fromTileY);
+        const tx = tileCenterX(player.toTileX);
+        const ty = tileCenterY(player.toTileY);
+        player.x = fx + (tx - fx) * ease;
+        player.y = fy + (ty - fy) * ease;
+
+        const moving = player.moveT < 1;
+        if (moving) {
+          player.walkTime += dt * (input.run ? player.runMultiplier : 1);
+          player.walkFrame = (Math.floor(player.walkTime * player.walkFps) % 4) + 1;
+        } else {
+          player.walkFrame = 1;
+        }
+
+        for (let gi = grassSplashes.length - 1; gi >= 0; gi--) {
+          grassSplashes[gi].age += dt;
+          if (grassSplashes[gi].age >= grassSplashes[gi].duration) grassSplashes.splice(gi, 1);
+        }
+
+        syncWindModeFromPlayer();
+        updateWindStrongAmbienceAudio(dt);
+
+        if (worldTime >= windNextGustWorldTime) {
+          if (windMode === "normal") {
+            const count = 4 + Math.floor(Math.random() * 3);
+            const laneCount = 10;
+            const lanes = windPickDistinctLanes(count, laneCount);
+            for (let i = 0; i < count; i++) {
+              const v = Math.random() < 0.3 ? "medium" : "small";
+              spawnWindGust({
+                variant: v,
+                laneIndex: lanes[i],
+                laneCount,
+                spawnEastExtra: i * 60,
+              });
+            }
+            windNextGustWorldTime = worldTime + 4 + Math.random() * 2;
+          } else {
+            const count = 4 + Math.floor(Math.random() * 2);
+            const laneCount = 8;
+            const lanes = windPickDistinctLanes(count, laneCount);
+            const sizes = ["medium", "large"];
+            for (let i = 0; i < count; i++) {
+              spawnWindGust({
+                variant: sizes[Math.floor(Math.random() * sizes.length)],
+                laneIndex: lanes[i],
+                laneCount,
+                spawnEastExtra: i * 55,
+              });
+            }
+            windNextGustWorldTime = worldTime + 3 + Math.random() * 2;
+          }
+        }
+
+        if (worldTime >= windSummitNextGustTime) {
+          const summitYMax = WIND_SUMMIT_MAX_TY * GRASS_TILE_PX;
+          const laneCount = 6;
+          const count = 4 + Math.floor(Math.random() * 3);
+          const lanes = windPickDistinctLanes(count, laneCount);
+          for (let i = 0; i < count; i++) {
+            spawnWindGust({
+              variant: Math.random() < 0.6 ? "large" : "medium",
+              yMin: 0,
+              yMax: summitYMax,
+              laneIndex: lanes[i],
+              laneCount,
+              spawnEastExtra: i * 45,
+            });
+          }
+          windSummitNextGustTime = worldTime + 0.5 + Math.random() * 0.8;
+        }
+
+        updateWind(dt);
+        touchGrassTilesUnderWind();
+        pruneGrassWindLastHit();
+        pruneGrassStepRustleLastHit();
+      }
+
+      function drawGrassSplashes(camX, camY, viewW, viewH) {
+        if (!grassSplash.loaded || !grassSplash.img || !grassSplashes.length) return;
+        const img = grassSplash.img;
+        const nw = img.naturalWidth || 32;
+        const nh = img.naturalHeight || 32;
+        const dw = nw;
+        const dh = nh;
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        for (let i = 0; i < grassSplashes.length; i++) {
+          const s = grassSplashes[i];
+          const u = clamp(s.age / s.duration, 0, 1);
+
+          const fallEase = u * u * (3 - 2 * u);
+          const fallPx = fallEase * GRASS_TILE_PX * GRASS_SPLASH_FALL_TILE_FRAC;
+
+          let alpha = 1;
+          const fadeStart = GRASS_SPLASH_FADE_START_U;
+          if (u > fadeStart) {
+            const ft = clamp((u - fadeStart) / (1 - fadeStart), 0, 1);
+            alpha = 1 - ft * ft * (3 - 2 * ft);
+          }
+
+          const cx = tileCenterX(s.tileX);
+          const cy = tileCenterY(s.tileY);
+          const sx = Math.round(cx - camX - dw / 2);
+          const sy = Math.round(cy - camY - dh / 2 + fallPx);
+
+          if (sx > viewW + dw || sx + dw < -dw || sy > viewH + dh || sy + dh < -dh) continue;
+
+          ctx.globalAlpha = alpha;
+          ctx.drawImage(img, sx, sy);
+        }
+        ctx.restore();
+      }
+
+      function render() {
+        const { viewW, viewH, camX, camY, screenW, screenH } = getCamera();
+
+        ctx.clearRect(0, 0, screenW, screenH);
+        ctx.save();
+        ctx.scale(UI.cameraZoom, UI.cameraZoom);
+        drawBackground(camX, camY, viewW, viewH);
+        drawWaterBaseNorthOfCarUnderlayRow(camX, camY, viewW, viewH);
+        drawStreetGround(camX, camY, viewW, viewH);
+        drawPathGround(camX, camY, viewW, viewH);
+        drawBrownMountains(camX, camY, viewW, viewH, { onlyTy: MOUNTAIN_CAR_STREET_UNDERLAY_ROW });
+        drawStreetCarGround(camX, camY, viewW, viewH);
+
+        const tcx = player.tileX;
+        const tcy = player.tileY;
+        const here = map[tcy][tcx - MAP_X_MIN];
+        const inGrass = here === T_GRASS;
+        const inFlower = here === T_FLOWER;
+
+        const screenX = Math.round(player.x - camX);
+        const screenY = Math.round(player.y - camY);
+
+        drawGrassBackPatch(camX, camY, viewW, viewH);
+        drawBrownMountains(camX, camY, viewW, viewH, { skipTy: MOUNTAIN_CAR_STREET_UNDERLAY_ROW });
+        drawTopStairPatch(camX, camY, viewW, viewH);
+        drawFlowerBackPatch(camX, camY, viewW, viewH);
+        drawSignpost(camX, camY);
+        drawWallTiles(camX, camY, viewW, viewH);
+        drawMapObjectTiles(camX, camY, viewW, viewH);
+        drawFenceOverlayTiles(camX, camY, viewW, viewH);
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAllExceptBigRock);
+
+        const selDraw = editorHud.editorSelectDrag
+          ? normalizeEditorSelect(editorHud.editorSelectDrag)
+          : editorHud.editorCopyRect;
+        if (selDraw) {
+          const tw = GRASS_TILE_PX;
+          ctx.save();
+          ctx.strokeStyle = "rgba(130, 255, 170, 0.92)";
+          ctx.lineWidth = 2;
+          ctx.strokeRect(
+            selDraw.x0 * tw - camX + 0.5,
+            selDraw.y0 * tw - camY + 0.5,
+            (selDraw.x1 - selDraw.x0 + 1) * tw - 1,
+            (selDraw.y1 - selDraw.y0 + 1) * tw - 1,
+          );
+          ctx.restore();
+        }
+        if (editorHud.editorPasteTarget) {
+          const tw = GRASS_TILE_PX;
+          const px = editorHud.editorPasteTarget.tx * tw - camX + tw - 5;
+          const py = editorHud.editorPasteTarget.ty * tw - camY + tw - 5;
+          ctx.save();
+          ctx.fillStyle = "rgba(255, 200, 90, 0.95)";
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Grass layering: moving UP onto grass draws every front strip before Red so nothing
+        // occludes him during the step. Moving DOWN (or idle / horizontal) keeps Pokémon-style
+        // depth: skip destination tile's strip in this pass, draw player, then draw that strip.
+        const toGrass = cellAtTile(player.toTileX, player.toTileY) === T_GRASS;
+        const moving = player.moveT < 1;
+        const walkUpOntoGrass =
+          moving && toGrass && player.toTileY < player.fromTileY;
+
+        if (!toGrass) {
+          drawGrassFrontPatchAll(camX, camY, viewW, viewH);
+        } else if (walkUpOntoGrass) {
+          drawGrassFrontPatchAll(camX, camY, viewW, viewH);
+        } else {
+          drawGrassFrontPatchExcept(camX, camY, viewW, viewH, tcy, tcx);
+        }
+
+        if (inFlower) drawFlowerFrontPatchExcept(camX, camY, viewW, viewH, tcy, tcx);
+        else drawFlowerFrontPatchAll(camX, camY, viewW, viewH);
+
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorBigRockBeforePlayerOnly);
+
+        drawPlayer(screenX, screenY);
+        drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAfterPlayer);
+
+        if (toGrass && !walkUpOntoGrass) drawGrassFrontAtTile(camX, camY, tcx, tcy);
+        if (inFlower) drawFlowerFrontAtTile(camX, camY, tcx, tcy);
+
+        drawGrassSplashes(camX, camY, viewW, viewH);
+
+        drawWind(camX, camY, viewW, viewH);
+        if (TWIN_PEAKS_EDITOR_MODE && editorHud.windModeHudEl) {
+          const label = windMode === "windy" ? "strong (y<" + WIND_NORMAL_MIN_TILE_Y + ")" : "normal (y≥" + WIND_NORMAL_MIN_TILE_Y + ")";
+          editorHud.windModeHudEl.textContent = "Wind: " + label + " · row " + player.tileY;
+        }
+        ctx.restore();
+      }
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min(0.033, (now - last) / 1000);
+        last = now;
+        worldTime += dt;
+        step(dt);
+        render();
+        requestAnimationFrame(loop);
+      }
+
+      /** Older saves stored ledge/rock ids in `cells`; restore base terrain from the built grid and move props to `decorOverlays`. */
+      function migrateLegacyBareOverlayCellsFromMapEdits(proceduralGrid) {
+        for (const k of Object.keys(mapEdits)) {
+          const v = mapEdits[k];
+          if (!isTerrainBareOverlayCell(v)) continue;
+          const parts = k.split(",");
+          if (parts.length !== 2) continue;
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) continue;
+          decorOverlays[k] = v;
+          delete mapEdits[k];
+          map[ty][tx - MAP_X_MIN] = proceduralGrid[ty][tx - MAP_X_MIN];
+        }
+      }
+
+      async function bootTwinPeaks() {
+        const built = buildMapData();
+        map = built.grid;
+        pathCells = built.pathCells;
+        streetCells = built.streetCells;
+        streetCarCells = built.streetCarCells;
+        mountainCornerArt = built.mountainCornerArt;
+        mountainForceVariant = built.mountainForceVariant;
+
+        const bundle = await resolveInitialEditBundle();
+        replaceEditBundleIntoGlobals(bundle);
+
+        const _brownKeysBoot = new Set(Object.keys(MOUNTAIN_BROWN_FILES));
+        const _cornerKeysBoot = new Set(Object.keys(MOUNTAIN_CORNER_FILES));
+        for (const mk of Object.keys(mountainEdits)) {
+          const s = mountainEdits[mk];
+          if (typeof s !== "string" || s === "" || s === "auto") delete mountainEdits[mk];
+          else if (s.startsWith("b:") && !_brownKeysBoot.has(s.slice(2))) delete mountainEdits[mk];
+          else if (s.startsWith("c:") && !_cornerKeysBoot.has(s.slice(2))) delete mountainEdits[mk];
+          else if (!s.startsWith("b:") && !s.startsWith("c:") && !_brownKeysBoot.has(s) && !_cornerKeysBoot.has(s)) delete mountainEdits[mk];
+        }
+        const _streetKeysBoot = new Set(Object.keys(STREET_GROUND_FILES));
+        const _streetCornerKeysBoot = new Set(Object.keys(STREET_CORNER_FILES));
+        for (const sk of Object.keys(streetArt)) {
+          const s = streetArt[sk];
+          if (typeof s !== "string" || s === "auto") delete streetArt[sk];
+          else if (s.startsWith("s:") && !_streetCornerKeysBoot.has(s.slice(2))) delete streetArt[sk];
+          else if (!s.startsWith("s:") && !_streetKeysBoot.has(s)) delete streetArt[sk];
+        }
+        const _streetCarKeysBoot = new Set(Object.keys(STREET_CAR_GROUND_FILES));
+        const _streetCarCornerKeysBoot = new Set(Object.keys(STREET_CAR_CORNER_FILES));
+        for (const sk of Object.keys(streetCarArt)) {
+          const s = streetCarArt[sk];
+          if (typeof s !== "string" || s === "auto") delete streetCarArt[sk];
+          else if (s.startsWith("sc:") && !_streetCarCornerKeysBoot.has(s.slice(3))) delete streetCarArt[sk];
+          else if (!s.startsWith("sc:") && !_streetCarKeysBoot.has(s)) delete streetCarArt[sk];
+        }
+
+        const _pathGroundKeysBoot = new Set(Object.keys(PATH_GROUND_FILES));
+        const _earthCornerKeysBoot = new Set(Object.keys(EARTH_CORNER_FILES));
+        for (const pk of Object.keys(pathArt)) {
+          const s = pathArt[pk];
+          if (typeof s !== "string" || s === "auto") delete pathArt[pk];
+          else if (s.startsWith("e:") && !_earthCornerKeysBoot.has(s.slice(2))) delete pathArt[pk];
+          else if (!s.startsWith("e:") && !_pathGroundKeysBoot.has(s)) delete pathArt[pk];
+        }
+        for (const fk of Object.keys(fenceOverlays)) {
+          const fv = fenceOverlays[fk];
+          if (!isFenceVariantId(fv)) delete fenceOverlays[fk];
+        }
+        migrateLegacyBareOverlayCellsFromMapEdits(built.grid);
+        for (const dk of Object.keys(decorOverlays)) {
+          const parts = dk.split(",");
+          if (parts.length !== 2) {
+            delete decorOverlays[dk];
+            continue;
+          }
+          const tx = Number(parts[0]);
+          const ty = Number(parts[1]);
+          if (!Number.isFinite(tx) || !Number.isFinite(ty) || !tileInWorldBounds(tx, ty)) {
+            delete decorOverlays[dk];
+            continue;
+          }
+          const dv = decorOverlays[dk];
+          if (!isDecorOverlayCell(dv)) delete decorOverlays[dk];
+        }
+        applyStartupMapEditLayers();
+
+        const startTile = findPlayerStart();
+        player.tileX = startTile.tx;
+        player.tileY = startTile.ty;
+        player.dir = "down";
+        player.fromTileX = player.toTileX = player.tileX;
+        player.fromTileY = player.toTileY = player.tileY;
+        player.x = tileCenterX(player.tileX);
+        player.y = tileCenterY(player.tileY);
+
+        if (TWIN_PEAKS_EDITOR_MODE) {
+          const { initTwinPeaksEditor } = await import("./js/editor.js");
+          initTwinPeaksEditor({
+            canvas,
+            getCamera,
+            screenToTile,
+            clamp,
+            tileInWorldBounds,
+            lineTiles,
+            MAP_X_MIN,
+            MAP_X_MAX,
+            MAP_Y_MIN,
+            MAP_ROWS,
+            map,
+            mapEdits,
+            mountainEdits,
+            streetArt,
+            streetCarArt,
+            earthPaint,
+            pathArt,
+            fenceOverlays,
+            decorOverlays,
+            pathCells,
+            streetCells,
+            streetCarCells,
+            applyOneCellEdit,
+            saveMapEditsBundle,
+            defaultCarStreetFaceForTile,
+            isFenceVariantId,
+            isDecorOverlayCell,
+            isMapCellOverlayObject,
+            editorHud,
+            mapEditBundleMeta,
+            rebuildGrassCaches,
+            mapUndoDepth: MAP_UNDO_DEPTH,
+            pushUndoSnapshot,
+            applyUndo,
+            normalizeEditorSelect,
+            buildMapClipboardFromRect,
+            pasteMapClipboardBottomRightAt,
+            T_VOID,
+            T_GRASS,
+            T_FLOWER,
+            T_WALL,
+            T_MOUNTAIN,
+            T_STAIRS,
+            T_EARTH,
+            T_TELESCOPE,
+            T_EARTH_STREET,
+            T_EARTH_STREET_CAR,
+            T_LEDGE,
+            T_ROCK_SMALL,
+            T_ROCK_MEDIUM,
+            T_ROCK_BIG,
+            T_BOARD,
+            T_LAMPPOST,
+            T_VEHICLE_BICYCLE_LEFT,
+            T_VEHICLE_BICYCLE_RIGHT,
+            T_VEHICLE_TRUCK,
+            T_FENCE_LOGS_LEFT,
+            T_FENCE_LOGS_RIGHT,
+            T_FENCE_LOGS_TOP_LEFT,
+            T_FENCE_LOGS_TOP_RIGHT,
+            T_FENCE_LOGS_BOTTOM_RIGHT,
+            T_FENCE_LOGS_BOTTOM_LEFT,
+            T_FENCE_LOGS_MIDDLE,
+            MOUNTAIN_BROWN_FILES,
+            MOUNTAIN_CORNER_FILES,
+            PATH_GROUND_FILES,
+            EARTH_CORNER_FILES,
+            STREET_GROUND_FILES,
+            STREET_CORNER_FILES,
+            STREET_CAR_GROUND_FILES,
+            STREET_CAR_CORNER_FILES,
+          });
+        }
+
+        requestAnimationFrame(loop);
+      }
+
+      initTelescopeView();
+      initMessageBox();
+      bootTwinPeaks().catch((err) => console.error(err));
