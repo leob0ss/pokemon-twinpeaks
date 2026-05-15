@@ -76,18 +76,25 @@
         -webkit-user-select: none;
       }
       @media (pointer: coarse) {
-        #gba-shell { display: flex; }
-        canvas {
-          position: relative !important;
-          width: 100% !important;
-          height: auto !important;
-          flex: 0 0 auto;
+        #gba-shell {
+          display: flex;
+          min-height: 100vh;
+          min-height: 100dvh;
+          height: 100vh;
+          height: 100dvh;
+          max-height: 100vh;
+          max-height: 100dvh;
+          overflow: hidden;
         }
       }
 
       /* Screen bezel */
+      /* Top section (~60% of dynamic viewport): bezel + game canvas; remainder is controls. */
       .gba-screen-area {
-        flex: 1 1 0;
+        flex: 0 0 60vh;
+        flex: 0 0 60dvh;
+        max-height: 60vh;
+        max-height: 60dvh;
         min-height: 0;
         background: #4a3568;
         padding: 10px 12px 6px;
@@ -103,12 +110,27 @@
         flex: 1 1 0;
         min-height: 0;
         display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
-      .gba-screen-bezel canvas {
-        border-radius: 3px;
-        display: block;
+      .gba-canvas-host {
+        flex: 1 1 0;
+        min-height: 0;
+        min-width: 0;
+        width: 100%;
+        position: relative;
+      }
+      /* Canvas inside mobile shell: absolute fill of host (keeps square pixels, no intrinsic-ratio squash). */
+      .gba-canvas-host canvas {
+        position: absolute !important;
+        left: 0;
+        top: 0;
         width: 100%;
         height: 100%;
+        border-radius: 3px;
+        display: block;
+        image-rendering: pixelated;
+        -webkit-touch-callout: none;
       }
       .gba-power-dot {
         width: 6px;
@@ -121,7 +143,8 @@
 
       /* Controls area */
       .gba-controls {
-        flex: 0 0 50vh;
+        flex: 1 1 0;
+        min-height: 0;
         background: #8b6fae;
         display: flex;
         align-items: center;
@@ -189,6 +212,38 @@
         border-radius: 50%;
         background: #1a1228;
         z-index: 3;
+      }
+
+      @media (pointer: coarse) {
+        .dpad-wrap {
+          width: 180px;
+          height: 180px;
+        }
+        .dpad-cross-h,
+        .dpad-cross-v {
+          border-radius: 8px;
+        }
+        .dpad-cross-h {
+          height: 54px;
+        }
+        .dpad-cross-v {
+          width: 54px;
+        }
+        .dpad-btn {
+          width: 56px;
+          height: 56px;
+        }
+        .dpad-btn.active {
+          border-radius: 8px;
+        }
+        .dpad-btn svg {
+          width: 22px;
+          height: 22px;
+        }
+        .dpad-center-dot {
+          width: 18px;
+          height: 18px;
+        }
       }
 
       /* A / B buttons */
@@ -444,7 +499,8 @@
       @media (pointer: coarse) {
         #telescope-overlay {
           align-items: flex-start;
-          padding: max(10px, env(safe-area-inset-top)) 12px calc(52vh + env(safe-area-inset-bottom)) 12px;
+          padding: max(10px, env(safe-area-inset-top)) 12px
+            calc(40dvh + max(0px, env(safe-area-inset-bottom))) 12px;
         }
         .telescope-ring {
           width: min(62vmin, 340px);
@@ -545,7 +601,7 @@
       }
       @media (pointer: coarse) {
         #message-box-overlay {
-          padding-bottom: calc(52vh + 14px);
+          padding-bottom: calc(40dvh + 14px);
         }
         .msgbox-text {
           font-size: 10px;
@@ -592,7 +648,9 @@
     </div>
     <div id="gba-shell">
       <div class="gba-screen-area">
-        <div class="gba-screen-bezel" id="gba-bezel"></div>
+        <div class="gba-screen-bezel" id="gba-bezel">
+          <div class="gba-canvas-host" id="gba-canvas-host"></div>
+        </div>
         <div class="gba-power-dot"></div>
       </div>
       <div class="gba-controls">
@@ -981,8 +1039,20 @@
         if (!shell) return;
         const isTouchDevice = window.matchMedia("(pointer: coarse)").matches;
         if (isTouchDevice) {
+          const host = document.getElementById("gba-canvas-host");
           const bezel = document.getElementById("gba-bezel");
-          if (bezel) bezel.appendChild(canvas);
+          const mount = host || bezel;
+          if (mount) {
+            mount.appendChild(canvas);
+            requestAnimationFrame(() => {
+              resize();
+            });
+            if (host && typeof ResizeObserver !== "undefined") {
+              new ResizeObserver(() => {
+                resize();
+              }).observe(host);
+            }
+          }
         }
 
         const controls = shell.querySelector(".gba-controls");
@@ -2606,6 +2676,9 @@
       });
 
       const sfxStepCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function resumeSfxContext() {
+        if (sfxStepCtx && sfxStepCtx.state === "suspended") sfxStepCtx.resume().catch(() => {});
+      }
       let sfxGrassBuffer = null;
       let sfxWalkBuffer = null;
       fetch("sounds/joentnt-walk-on-grass-1-291984.mp3")
@@ -2622,7 +2695,7 @@
       const SFX_WALK_STEP_VOL = 0.6;
       function playStepSound(buffer, volume) {
         if (!buffer) return;
-        if (sfxStepCtx.state === "suspended") sfxStepCtx.resume().catch(() => {});
+        resumeSfxContext();
         const source = sfxStepCtx.createBufferSource();
         source.buffer = buffer;
         const gain = sfxStepCtx.createGain();
@@ -2640,11 +2713,17 @@
       windStrongAmbienceAudio.loop = true;
       windStrongAmbienceAudio.preload = "auto";
       windStrongAmbienceAudio.volume = 0;
+      [windAmbienceAudio, windStrongAmbienceAudio].forEach((a) => {
+        a.setAttribute("playsinline", "");
+        a.setAttribute("webkit-playsinline", "");
+      });
       const WIND_STRONG_MAX_VOL = 0.22;
       const WIND_STRONG_FADE_SEC = 1.2;
       const WIND_STRONG_FADE_SPEED = WIND_STRONG_MAX_VOL / WIND_STRONG_FADE_SEC;
       let windStrongAmbiencePlaying = false;
       let windAmbienceGestureSeen = false;
+      let audioUnlockListenersRemoved = false;
+      const _audioUnlockCap = { capture: true, passive: true };
       function tryStartWindAmbience() {
         windAmbienceAudio.play().catch(() => {});
       }
@@ -2668,18 +2747,57 @@
           windStrongAmbiencePlaying = false;
         }
       }
-      function onFirstUserGestureForWindAmbience() {
+      function removeAudioUnlockListeners() {
+        if (audioUnlockListenersRemoved) return;
+        audioUnlockListenersRemoved = true;
+        window.removeEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        window.removeEventListener("keydown", unlockGameAudioFromUserGesture);
+        window.removeEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        window.removeEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      }
+      function unlockGameAudioFromUserGesture() {
+        if (windAmbienceGestureSeen) {
+          resumeSfxContext();
+          if (windAmbienceAudio.paused) tryStartWindAmbience();
+          if (windMode === "windy" && windStrongAmbienceAudio.paused) {
+            windStrongAmbienceAudio.play().catch(() => {});
+            windStrongAmbiencePlaying = true;
+          }
+          return;
+        }
         windAmbienceGestureSeen = true;
+        resumeSfxContext();
         tryStartWindAmbience();
         syncWindModeFromPlayer();
         updateWindStrongAmbienceAudio(0);
-        window.removeEventListener("pointerdown", onFirstUserGestureForWindAmbience);
-        window.removeEventListener("keydown", onFirstUserGestureForWindAmbience);
-        window.removeEventListener("touchstart", onFirstUserGestureForWindAmbience, { capture: true });
+        removeAudioUnlockListeners();
       }
-      window.addEventListener("pointerdown", onFirstUserGestureForWindAmbience, { passive: true });
-      window.addEventListener("keydown", onFirstUserGestureForWindAmbience);
-      window.addEventListener("touchstart", onFirstUserGestureForWindAmbience, { capture: true, passive: true });
+      function reviveAmbienceAfterBackground() {
+        if (!windAmbienceGestureSeen) return;
+        resumeSfxContext();
+        tryStartWindAmbience();
+        if (windMode === "windy") {
+          windStrongAmbienceAudio.play().catch(() => {});
+          windStrongAmbiencePlaying = true;
+        }
+        updateWindStrongAmbienceAudio(0);
+      }
+      window.addEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      window.addEventListener("keydown", unlockGameAudioFromUserGesture);
+      window.addEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      window.addEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") reviveAmbienceAfterBackground();
+      });
+      window.addEventListener("pageshow", () => {
+        reviveAmbienceAfterBackground();
+      });
+      (function wireGbaControlsAudioUnlock() {
+        const c = document.querySelector(".gba-controls");
+        if (!c) return;
+        c.addEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
+        c.addEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
+      })();
 
       const objectTelescope = { loaded: false, img: null };
       loadImage(encodeURI("objects/Telescope.svg"))
@@ -3918,12 +4036,26 @@
       }
 
       function getCamera() {
-        const screenW = canvas.getBoundingClientRect().width;
-        const screenH = canvas.getBoundingClientRect().height;
+        const rect = canvas.getBoundingClientRect();
+        const screenW = rect.width;
+        const screenH = rect.height;
         const viewW = screenW / CAMERA_ZOOM;
         const viewH = screenH / CAMERA_ZOOM;
-        const camX = clamp(player.x - viewW / 2, WORLD_PX_X0, WORLD_PX_X1 - viewW);
-        const camY = clamp(player.y - viewH / 2, 0, WORLD_H - viewH);
+        const worldMinX = WORLD_PX_X0;
+        const worldSpanX = WORLD_PX_X1 - WORLD_PX_X0;
+        let camX;
+        if (viewW >= worldSpanX) {
+          camX = worldMinX - (viewW - worldSpanX) / 2;
+        } else {
+          camX = clamp(player.x - viewW / 2, worldMinX, WORLD_PX_X1 - viewW);
+        }
+        const worldHpx = WORLD_H;
+        let camY;
+        if (viewH >= worldHpx) {
+          camY = -(viewH - worldHpx) / 2;
+        } else {
+          camY = clamp(player.y - viewH / 2, 0, worldHpx - viewH);
+        }
         return { viewW, viewH, camX, camY, screenW, screenH };
       }
 
