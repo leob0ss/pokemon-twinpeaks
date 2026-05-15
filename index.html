@@ -148,7 +148,7 @@
         background: #8b6fae;
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: center;
         padding: 0 24px;
         position: relative;
       }
@@ -244,55 +244,6 @@
           width: 18px;
           height: 18px;
         }
-      }
-
-      /* A / B buttons */
-      .gba-ab {
-        display: flex;
-        gap: 12px;
-        transform: rotate(-25deg);
-        flex-shrink: 0;
-      }
-      .gba-btn-round {
-        width: 48px;
-        height: 48px;
-        border-radius: 50%;
-        border: none;
-        font: bold 14px system-ui, sans-serif;
-        color: rgba(255,255,255,0.6);
-        text-shadow: 0 1px 1px rgba(0,0,0,0.3);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 3px 0 rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
-      }
-      .gba-btn-a { background: #6b3a7a; }
-      .gba-btn-b { background: #6b3a7a; }
-
-      /* Start / Select */
-      .gba-start-select {
-        position: absolute;
-        bottom: 12px;
-        left: 50%;
-        transform: translateX(-50%);
-        display: flex;
-        gap: 18px;
-      }
-      .gba-pill {
-        width: 40px;
-        height: 12px;
-        border-radius: 6px;
-        background: #5c4580;
-        box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
-      }
-      .gba-pill-label {
-        font: bold 7px system-ui, sans-serif;
-        color: rgba(255,255,255,0.35);
-        text-transform: uppercase;
-        text-align: center;
-        margin-top: 2px;
-        letter-spacing: 1px;
       }
 
       /* Speaker grille */
@@ -634,7 +585,7 @@
         </div>
         <p class="telescope-caption">
           <span class="telescope-caption-mouse">Hover the left or right edge to pan · Esc to close</span>
-          <span class="telescope-caption-touch">Swipe the view or hold Left / Right · Tap × or B to close</span>
+          <span class="telescope-caption-touch">Swipe the view or hold Left / Right · Tap × to close</span>
         </p>
       </div>
     </div>
@@ -670,14 +621,6 @@
           <div class="dpad-btn dpad-right" data-dir="right">
             <svg viewBox="0 0 24 24"><path d="M20 12l-9-8v5H4v6h7v5z"/></svg>
           </div>
-        </div>
-        <div class="gba-ab">
-          <div class="gba-btn-round gba-btn-b">B</div>
-          <div class="gba-btn-round gba-btn-a">A</div>
-        </div>
-        <div class="gba-start-select">
-          <div><div class="gba-pill"></div><div class="gba-pill-label">Select</div></div>
-          <div><div class="gba-pill"></div><div class="gba-pill-label">Start</div></div>
         </div>
         <div class="gba-speaker">
           <div class="gba-speaker-line"></div>
@@ -2497,29 +2440,6 @@
           },
           { passive: false },
         );
-        const gbaBtnA = document.querySelector(".gba-btn-a");
-        const gbaBtnB = document.querySelector(".gba-btn-b");
-        const bindGbaDismiss = (el) => {
-          if (!el) return;
-          el.addEventListener(
-            "touchstart",
-            (e) => {
-              if (!messageBoxOpen) return;
-              e.preventDefault();
-              e.stopPropagation();
-              advanceMessageBox();
-            },
-            { passive: false },
-          );
-          el.addEventListener("click", (e) => {
-            if (!messageBoxOpen) return;
-            e.preventDefault();
-            e.stopPropagation();
-            advanceMessageBox();
-          });
-        };
-        bindGbaDismiss(gbaBtnA);
-        bindGbaDismiss(gbaBtnB);
       }
 
       function initTelescopeView() {
@@ -2529,26 +2449,8 @@
         const edgeRight = document.getElementById("telescope-edge-right");
         const panBtnLeft = document.getElementById("telescope-pan-btn-left");
         const panBtnRight = document.getElementById("telescope-pan-btn-right");
-        const gbaBtnB = document.querySelector(".gba-btn-b");
 
         closeBtn?.addEventListener("click", () => closeTelescopeView());
-
-        gbaBtnB?.addEventListener(
-          "touchstart",
-          (e) => {
-            if (!telescopeViewOpen) return;
-            e.preventDefault();
-            e.stopPropagation();
-            closeTelescopeView();
-          },
-          { passive: false },
-        );
-        gbaBtnB?.addEventListener("click", (e) => {
-          if (!telescopeViewOpen) return;
-          e.preventDefault();
-          e.stopPropagation();
-          closeTelescopeView();
-        });
 
         function bindPanControl(el, dir, activeClass) {
           if (!el) return;
@@ -2757,6 +2659,7 @@
       }
       function unlockGameAudioFromUserGesture() {
         if (windAmbienceGestureSeen) {
+          syncWindModeFromPlayer();
           resumeSfxContext();
           if (windAmbienceAudio.paused) tryStartWindAmbience();
           if (windMode === "windy" && windStrongAmbienceAudio.paused) {
@@ -2774,6 +2677,7 @@
       }
       function reviveAmbienceAfterBackground() {
         if (!windAmbienceGestureSeen) return;
+        syncWindModeFromPlayer();
         resumeSfxContext();
         tryStartWindAmbience();
         if (windMode === "windy") {
@@ -2782,13 +2686,25 @@
         }
         updateWindStrongAmbienceAudio(0);
       }
+      /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
+      function suspendGameAudioWhenLeavingPage() {
+        windAmbienceAudio.pause();
+        windStrongAmbienceAudio.pause();
+        windStrongAmbiencePlaying = false;
+        if (sfxStepCtx && sfxStepCtx.state !== "closed") {
+          sfxStepCtx.suspend().catch(() => {});
+        }
+      }
       window.addEventListener("pointerdown", unlockGameAudioFromUserGesture, _audioUnlockCap);
       window.addEventListener("keydown", unlockGameAudioFromUserGesture);
       window.addEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
       window.addEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
       document.addEventListener("visibilitychange", () => {
         if (document.visibilityState === "visible") reviveAmbienceAfterBackground();
+        else suspendGameAudioWhenLeavingPage();
       });
+      window.addEventListener("pagehide", suspendGameAudioWhenLeavingPage);
+      window.addEventListener("beforeunload", suspendGameAudioWhenLeavingPage);
       window.addEventListener("pageshow", () => {
         reviveAmbienceAfterBackground();
       });
@@ -4186,59 +4102,6 @@
 
         const prevMoveT = player.moveT;
 
-        syncWindModeFromPlayer();
-        updateWindStrongAmbienceAudio(dt);
-
-        if (worldTime >= windNextGustWorldTime) {
-          if (windMode === "normal") {
-            const count = 4 + Math.floor(Math.random() * 3);
-            const laneCount = 10;
-            const lanes = windPickDistinctLanes(count, laneCount);
-            for (let i = 0; i < count; i++) {
-              const v = Math.random() < 0.3 ? "medium" : "small";
-              spawnWindGust({
-                variant: v,
-                laneIndex: lanes[i],
-                laneCount,
-                spawnEastExtra: i * 60,
-              });
-            }
-            windNextGustWorldTime = worldTime + 4 + Math.random() * 2;
-          } else {
-            const count = 4 + Math.floor(Math.random() * 2);
-            const laneCount = 8;
-            const lanes = windPickDistinctLanes(count, laneCount);
-            const sizes = ["medium", "large"];
-            for (let i = 0; i < count; i++) {
-              spawnWindGust({
-                variant: sizes[Math.floor(Math.random() * sizes.length)],
-                laneIndex: lanes[i],
-                laneCount,
-                spawnEastExtra: i * 55,
-              });
-            }
-            windNextGustWorldTime = worldTime + 3 + Math.random() * 2;
-          }
-        }
-
-        if (worldTime >= windSummitNextGustTime) {
-          const summitYMax = WIND_SUMMIT_MAX_TY * GRASS_TILE_PX;
-          const laneCount = 6;
-          const count = 4 + Math.floor(Math.random() * 3);
-          const lanes = windPickDistinctLanes(count, laneCount);
-          for (let i = 0; i < count; i++) {
-            spawnWindGust({
-              variant: Math.random() < 0.6 ? "large" : "medium",
-              yMin: 0,
-              yMax: summitYMax,
-              laneIndex: lanes[i],
-              laneCount,
-              spawnEastExtra: i * 45,
-            });
-          }
-          windSummitNextGustTime = worldTime + 0.5 + Math.random() * 0.8;
-        }
-
         const isMoving = player.moveT < 1;
 
         // Start a new tile-step if idle and any direction is pressed.
@@ -4327,6 +4190,59 @@
         for (let gi = grassSplashes.length - 1; gi >= 0; gi--) {
           grassSplashes[gi].age += dt;
           if (grassSplashes[gi].age >= grassSplashes[gi].duration) grassSplashes.splice(gi, 1);
+        }
+
+        syncWindModeFromPlayer();
+        updateWindStrongAmbienceAudio(dt);
+
+        if (worldTime >= windNextGustWorldTime) {
+          if (windMode === "normal") {
+            const count = 4 + Math.floor(Math.random() * 3);
+            const laneCount = 10;
+            const lanes = windPickDistinctLanes(count, laneCount);
+            for (let i = 0; i < count; i++) {
+              const v = Math.random() < 0.3 ? "medium" : "small";
+              spawnWindGust({
+                variant: v,
+                laneIndex: lanes[i],
+                laneCount,
+                spawnEastExtra: i * 60,
+              });
+            }
+            windNextGustWorldTime = worldTime + 4 + Math.random() * 2;
+          } else {
+            const count = 4 + Math.floor(Math.random() * 2);
+            const laneCount = 8;
+            const lanes = windPickDistinctLanes(count, laneCount);
+            const sizes = ["medium", "large"];
+            for (let i = 0; i < count; i++) {
+              spawnWindGust({
+                variant: sizes[Math.floor(Math.random() * sizes.length)],
+                laneIndex: lanes[i],
+                laneCount,
+                spawnEastExtra: i * 55,
+              });
+            }
+            windNextGustWorldTime = worldTime + 3 + Math.random() * 2;
+          }
+        }
+
+        if (worldTime >= windSummitNextGustTime) {
+          const summitYMax = WIND_SUMMIT_MAX_TY * GRASS_TILE_PX;
+          const laneCount = 6;
+          const count = 4 + Math.floor(Math.random() * 3);
+          const lanes = windPickDistinctLanes(count, laneCount);
+          for (let i = 0; i < count; i++) {
+            spawnWindGust({
+              variant: Math.random() < 0.6 ? "large" : "medium",
+              yMin: 0,
+              yMax: summitYMax,
+              laneIndex: lanes[i],
+              laneCount,
+              spawnEastExtra: i * 45,
+            });
+          }
+          windSummitNextGustTime = worldTime + 0.5 + Math.random() * 0.8;
         }
 
         updateWind(dt);
