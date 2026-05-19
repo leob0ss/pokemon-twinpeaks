@@ -2362,6 +2362,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const WIND_STRONG_FADE_SEC = 1.2;
       const WIND_STRONG_FADE_SPEED = WIND_STRONG_MAX_VOL / WIND_STRONG_FADE_SEC;
       let windStrongAmbiencePlaying = false;
+      let windStrongAudioGraphReady = false;
+      let windStrongGainNode = null;
       let windAmbienceGestureSeen = false;
       let audioUnlockListenersRemoved = false;
       const _audioUnlockCap = { capture: true, passive: true };
@@ -2369,24 +2371,59 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         if (!gameAudioAssetsLoaded || !windAmbienceAudio.src) return;
         windAmbienceAudio.play().catch(() => {});
       }
+
+      /** iOS Safari often ignores `HTMLAudioElement.volume`; route strong wind through a GainNode. */
+      function ensureWindStrongAudioGraph() {
+        if (windStrongAudioGraphReady || !gameAudioAssetsLoaded || !windStrongAmbienceAudio.src) return;
+        resumeSfxContext();
+        if (sfxStepCtx.state !== "running") return;
+        try {
+          const src = sfxStepCtx.createMediaElementSource(windStrongAmbienceAudio);
+          windStrongGainNode = sfxStepCtx.createGain();
+          windStrongGainNode.gain.value = 0;
+          src.connect(windStrongGainNode);
+          windStrongGainNode.connect(sfxStepCtx.destination);
+          windStrongAmbienceAudio.volume = 1;
+          windStrongAudioGraphReady = true;
+        } catch {
+          windStrongAudioGraphReady = false;
+          windStrongGainNode = null;
+        }
+      }
+
+      function getStrongWindGain() {
+        return windStrongGainNode ? windStrongGainNode.gain.value : windStrongAmbienceAudio.volume;
+      }
+
+      function setStrongWindGain(v) {
+        if (windStrongGainNode) windStrongGainNode.gain.value = v;
+        else windStrongAmbienceAudio.volume = v;
+      }
+
+      function pauseStrongWindAmbience() {
+        windStrongAmbienceAudio.pause();
+        windStrongAmbienceAudio.currentTime = 0;
+        setStrongWindGain(0);
+        windStrongAmbiencePlaying = false;
+      }
+
       function updateWindStrongAmbienceAudio(dt) {
         if (!windAmbienceGestureSeen) return;
+        ensureWindStrongAudioGraph();
         const target = windMode === "windy" ? WIND_STRONG_MAX_VOL : 0;
-        const vol = windStrongAmbienceAudio.volume;
+        const vol = getStrongWindGain();
         if (vol < target) {
-          windStrongAmbienceAudio.volume = Math.min(target, vol + WIND_STRONG_FADE_SPEED * dt);
+          setStrongWindGain(Math.min(target, vol + WIND_STRONG_FADE_SPEED * dt));
         } else if (vol > target) {
-          windStrongAmbienceAudio.volume = Math.max(target, vol - WIND_STRONG_FADE_SPEED * dt);
+          setStrongWindGain(Math.max(target, vol - WIND_STRONG_FADE_SPEED * dt));
         }
         if (target > 0 && !windStrongAmbiencePlaying && gameAudioAssetsLoaded && windStrongAmbienceAudio.src) {
+          resumeSfxContext();
           windStrongAmbienceAudio.play().catch(() => {});
           windStrongAmbiencePlaying = true;
         }
-        if (windStrongAmbienceAudio.volume <= 0.001 && target === 0 && windStrongAmbiencePlaying) {
-          windStrongAmbienceAudio.pause();
-          windStrongAmbienceAudio.currentTime = 0;
-          windStrongAmbienceAudio.volume = 0;
-          windStrongAmbiencePlaying = false;
+        if (getStrongWindGain() <= 0.001 && target === 0 && windStrongAmbiencePlaying) {
+          pauseStrongWindAmbience();
         }
       }
       function removeAudioUnlockListeners() {
@@ -2442,8 +2479,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
       function suspendGameAudioWhenLeavingPage() {
         windAmbienceAudio.pause();
-        windStrongAmbienceAudio.pause();
-        windStrongAmbiencePlaying = false;
+        if (windStrongAmbiencePlaying) pauseStrongWindAmbience();
+        else setStrongWindGain(0);
         if (sfxStepCtx && sfxStepCtx.state !== "closed") {
           sfxStepCtx.suspend().catch(() => {});
         }
@@ -4104,15 +4141,21 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       function step(dt) {
         if (telescopeViewOpen) {
           updateTelescopePan(dt);
+          syncWindModeFromPlayer();
+          updateWindStrongAmbienceAudio(dt);
           return;
         }
         if (tutorial.active) {
           updateTutorial(dt);
           if (messageBoxOpen) updateMessageBox(dt);
+          syncWindModeFromPlayer();
+          updateWindStrongAmbienceAudio(dt);
           return;
         }
         if (messageBoxOpen) {
           updateMessageBox(dt);
+          syncWindModeFromPlayer();
+          updateWindStrongAmbienceAudio(dt);
           return;
         }
 
