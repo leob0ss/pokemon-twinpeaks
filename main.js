@@ -9,6 +9,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       // --- Super-simple map editor (personal use) ---
       const MAP_EDITS_STORAGE_KEY_V2 = "twinpeaks_map_edits_v2";
       const MAP_EDITS_STORAGE_KEY_V1 = "twinpeaks_map_edits_v1";
+      /** `?devMap` only: last player tile/dir before reload. */
+      const DEV_PLAYER_POS_STORAGE_KEY = "twinpeaks_dev_player_pos_v1";
       /** Shipped with the site: everyone loads this; replace via Export + commit to publish map changes. */
       const PUBLISHED_MAP_URL = "published-map.json";
       const twinPeaksUrlParams = new URLSearchParams(location.search);
@@ -186,12 +188,48 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       window.addEventListener("resize", resize);
       resize();
 
+      (function initDesktopGameFrame() {
+        if (UI.coarsePointer) return;
+        const frame = document.getElementById("game-frame");
+        if (!frame || typeof ResizeObserver === "undefined") return;
+        new ResizeObserver(() => {
+          resize();
+        }).observe(frame);
+      })();
+
+      function movementKeyDir(key) {
+        switch (key) {
+          case "ArrowUp":
+          case "w":
+          case "W":
+            return "up";
+          case "ArrowDown":
+          case "s":
+          case "S":
+            return "down";
+          case "ArrowLeft":
+          case "a":
+          case "A":
+            return "left";
+          case "ArrowRight":
+          case "d":
+          case "D":
+            return "right";
+          default:
+            return null;
+        }
+      }
+
       window.addEventListener("keydown", (e) => {
         if (messageBoxOpen) {
           if (e.key === "Escape" || isMessageBoxAdvanceKey(e.key)) {
             e.preventDefault();
             advanceMessageBox();
           }
+          return;
+        }
+        if (tutorial.active) {
+          e.preventDefault();
           return;
         }
         if (telescopeViewOpen) {
@@ -201,54 +239,28 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           }
           return;
         }
-        if (e.key === "ArrowUp" && playerCanReadBoardSign()) {
+        const moveDir = movementKeyDir(e.key);
+        if (moveDir === "up" && playerCanReadBoardSign()) {
           e.preventDefault();
           openMessageBox(BOARD_SIGN_MESSAGE);
           return;
         }
-        if (e.key === "ArrowDown" && playerCanUseTelescope()) {
+        if (moveDir === "down" && playerCanUseTelescope()) {
           e.preventDefault();
           openTelescopeView();
           return;
         }
-        if (e.key.startsWith("Arrow")) e.preventDefault();
-        switch (e.key) {
-          case "ArrowUp":
-            input.up = true;
-            break;
-          case "ArrowDown":
-            input.down = true;
-            break;
-          case "ArrowLeft":
-            input.left = true;
-            break;
-          case "ArrowRight":
-            input.right = true;
-            break;
-          case "Shift":
-            input.run = true;
-            break;
+        if (moveDir) {
+          e.preventDefault();
+          input[moveDir] = true;
         }
+        if (e.key === "Shift") input.run = true;
       });
 
       window.addEventListener("keyup", (e) => {
-        switch (e.key) {
-          case "ArrowUp":
-            input.up = false;
-            break;
-          case "ArrowDown":
-            input.down = false;
-            break;
-          case "ArrowLeft":
-            input.left = false;
-            break;
-          case "ArrowRight":
-            input.right = false;
-            break;
-          case "Shift":
-            input.run = false;
-            break;
-        }
+        const moveDir = movementKeyDir(e.key);
+        if (moveDir) input[moveDir] = false;
+        if (e.key === "Shift") input.run = false;
       });
 
       (function initGbaShell() {
@@ -339,31 +351,31 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         controls.addEventListener("touchcancel", handleEnd);
       })();
 
-      const SPRITES_BASE = `${VISUAL_ASSETS_ROOT}/characters/character_1/`;
-      const RED_FILES = {
+      const SPRITES_BASE = `${VISUAL_ASSETS_ROOT}/characters/character_3/`;
+      const PLAYER_SPRITE_FILES = {
         up: {
-          1: "Character=Red, Steps=1, Orientation=↑ Back.png",
-          2: "Character=Red, Steps=2, Orientation=↑ Back.png",
-          3: "Character=Red, Steps=3, Orientation=↑ Back.png",
-          4: "Character=Red, Steps=4, Orientation=↑ Back.png",
+          1: "Character=016 -, Steps=1, Orientation=↑ Back.png",
+          2: "Character=016 -, Steps=2, Orientation=↑ Back.png",
+          3: "Character=016 -, Steps=3, Orientation=↑ Back.png",
+          4: "Character=016 -, Steps=4, Orientation=↑ Back.png",
         },
         down: {
-          1: "Character=Red, Steps=1, Orientation=↓ Front.png",
-          2: "Character=Red, Steps=2, Orientation=↓ Front.png",
-          3: "Character=Red, Steps=3, Orientation=↓ Front.png",
-          4: "Character=Red, Steps=4, Orientation=↓ Front.png",
+          1: "Character=016 -, Steps=1, Orientation=↓ Front.png",
+          2: "Character=016 -, Steps=2, Orientation=↓ Front.png",
+          3: "Character=016 -, Steps=3, Orientation=↓ Front.png",
+          4: "Character=016 -, Steps=4, Orientation=↓ Front.png",
         },
         left: {
-          1: "Character=Red, Steps=1, Orientation=_- Left.png",
-          2: "Character=Red, Steps=2, Orientation=_- Left.png",
-          3: "Character=Red, Steps=3, Orientation=_- Left.png",
-          4: "Character=Red, Steps=4, Orientation=_- Left.png",
+          1: "Character=016 -, Steps=1, Orientation=_- Left.png",
+          2: "Character=016 -, Steps=2, Orientation=_- Left.png",
+          3: "Character=016 -, Steps=3, Orientation=_- Left.png",
+          4: "Character=016 -, Steps=4, Orientation=_- Left.png",
         },
         right: {
-          1: "Character=Red, Steps=1, Orientation=-_ Right.png",
-          2: "Character=Red, Steps=2, Orientation=-_ Right.png",
-          3: "Character=Red, Steps=3, Orientation=-_ Right.png",
-          4: "Character=Red, Steps=4, Orientation=-_ Right.png",
+          1: "Character=016 -, Steps=1, Orientation=-_ Right.png",
+          2: "Character=016 -, Steps=2, Orientation=-_ Right.png",
+          3: "Character=016 -, Steps=3, Orientation=-_ Right.png",
+          4: "Character=016 -, Steps=4, Orientation=-_ Right.png",
         },
       };
 
@@ -400,6 +412,19 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
 
       function tileInWorldBounds(tx, ty) {
         return tx >= MAP_X_MIN && tx <= MAP_X_MAX && ty >= MAP_Y_MIN && ty < MAP_ROWS;
+      }
+
+      /**
+       * Playable map (inclusive tile coords). Birds spawn / respawn inside this box.
+       * Top: (-26, 40) … (44, 40). Bottom: (-26, 103) … (44, 103).
+       */
+      const PLAYABLE_X_MIN = -26;
+      const PLAYABLE_X_MAX = 44;
+      const PLAYABLE_Y_MIN = 40;
+      const PLAYABLE_Y_MAX = 103;
+
+      function tileInPlayableBounds(tx, ty) {
+        return tx >= PLAYABLE_X_MIN && tx <= PLAYABLE_X_MAX && ty >= PLAYABLE_Y_MIN && ty <= PLAYABLE_Y_MAX;
       }
 
       const T_EARTH = 0;
@@ -440,6 +465,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const T_BOARD = 117;
       /** Street lamppost (`objects/Lamppost.png`); tall decor with Pokémon-style depth vs player. */
       const T_LAMPPOST = 118;
+      /** Sutro Tower (`objects/Sutro_tower.png`); tall landmark, native PNG size. */
+      const T_SUTRO_TOWER = 119;
 
       const VEHICLE_PNG_PATHS = {
         [T_VEHICLE_BICYCLE_LEFT]: `${VISUAL_ASSETS_ROOT}/vehicles/Property 1=Bicycle Left.png`,
@@ -469,6 +496,9 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const LAMPPOST_PNG_PATHS = {
         [T_LAMPPOST]: `${VISUAL_ASSETS_ROOT}/objects/Lamppost.png`,
       };
+      const SUTRO_TOWER_PNG_PATHS = {
+        [T_SUTRO_TOWER]: `${VISUAL_ASSETS_ROOT}/objects/Sutro_tower.png`,
+      };
       const OVERLAY_PNG_PATHS = { ...VEHICLE_PNG_PATHS, ...FENCE_LOG_PNG_PATHS, ...LEDGE_PNG_PATHS, ...ROCKS_PNG_PATHS };
 
       /** Ledge + rocks: sit on top of whatever is drawn behind them; never assign earth lanes or lane art. */
@@ -478,12 +508,12 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
 
       /** Props on `decorOverlays` (bare terrain overlays + path objects). */
       function isDecorOverlayCell(c) {
-        return isTerrainBareOverlayCell(c) || c === T_BOARD || c === T_LAMPPOST;
+        return isTerrainBareOverlayCell(c) || c === T_BOARD || c === T_LAMPPOST || c === T_SUTRO_TOWER;
       }
 
       /** Tall decor split before/after Red by feet vs tile base (big rock, lamppost). */
       function isTallDecorOverlay(dv) {
-        return dv === T_ROCK_BIG || dv === T_LAMPPOST;
+        return dv === T_ROCK_BIG || dv === T_LAMPPOST || dv === T_SUTRO_TOWER;
       }
 
       function isFenceVariantId(v) {
@@ -963,7 +993,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
 
       async function tryFetchPublishedMapBundle() {
         try {
-          const res = await fetch(PUBLISHED_MAP_URL, { cache: "no-store" });
+          const fetchOpts = TWIN_PEAKS_EDITOR_MODE ? { cache: "no-store" } : {};
+          const res = await fetch(PUBLISHED_MAP_URL, fetchOpts);
           if (!res.ok) return null;
           const parsed = await res.json();
           if (!parsed || typeof parsed !== "object" || typeof parsed.cells !== "object") return null;
@@ -1081,10 +1112,288 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         return "center";
       }
 
-      const BOARD_PATH_SIGN_TILE = { tx: 3, ty: 99 };
-      const BOARD_SIGN_READ_TILE = { tx: 3, ty: 100 };
-      const BOARD_SIGN_MESSAGE =
-        "Welcome to Twin Peaks, the best view point in San Francisco. This is a project of LEO.";
+      const BOARD_PATH_SIGN_TILE = { tx: 2, ty: 95 };
+      const BOARD_SIGN_READ_TILE = { tx: 2, ty: 96 };
+      const BOARD_SIGN_MESSAGE = "Twin Peaks. All the way up. Very windy.";
+
+      /** Forced intro: player stops at (2,99); NPC walks in from (-12,99) (just west of desktop frame). */
+      const TUTORIAL_TRIGGER_TX = 2;
+      const TUTORIAL_TRIGGER_TY = 99;
+      const TUTORIAL_NPC_STOP_TX = 1;
+      const TUTORIAL_NPC_STOP_TY = 99;
+      const TUTORIAL_NPC_ENTER_TX = -12;
+      const TUTORIAL_NPC_TY = 99;
+      const TUTORIAL_NPC_HEY = "Hey!";
+      const TUTORIAL_DIALOGUE = [
+        "You don't look like you're from around here?",
+        "This is Twin Peaks, my favorite neighborhood in San Francisco.",
+        "You can walk around, chase birds and look at the view. That's it!",
+        "Wait.",
+        "I forgot to introduce myself...",
+        "I'm Leo.",
+        "I create beautiful things, like this website.",
+        "Enjoy!",
+      ];
+
+      const NPC_SPRITES_BASE = `${VISUAL_ASSETS_ROOT}/characters/character_2/`;
+      const NPC_SPRITE_FILES = {
+        up: {
+          1: "Character=031 -, Steps=1, Orientation=↑ Back.png",
+          2: "Character=031 -, Steps=2, Orientation=↑ Back.png",
+          3: "Character=031 -, Steps=3, Orientation=↑ Back.png",
+          4: "Character=031 -, Steps=4, Orientation=↑ Back.png",
+        },
+        down: {
+          1: "Character=031 -, Steps=1, Orientation=↓ Front.png",
+          2: "Character=031 -, Steps=2, Orientation=↓ Front.png",
+          3: "Character=031 -, Steps=3, Orientation=↓ Front.png",
+          4: "Character=031 -, Steps=4, Orientation=↓ Front.png",
+        },
+        left: {
+          1: "Character=031 -, Steps=1, Orientation=_- Left.png",
+          2: "Character=031 -, Steps=2, Orientation=_- Left.png",
+          3: "Character=031 -, Steps=3, Orientation=_- Left.png",
+          4: "Character=031 -, Steps=4, Orientation=_- Left.png",
+        },
+        right: {
+          1: "Character=031 -, Steps=1, Orientation=-_ Right.png",
+          2: "Character=031 -, Steps=2, Orientation=-_ Right.png",
+          3: "Character=031 -, Steps=3, Orientation=-_ Right.png",
+          4: "Character=031 -, Steps=4, Orientation=-_ Right.png",
+        },
+      };
+
+      const npcSprites = { loaded: false, byDir: { up: {}, down: {}, left: {}, right: {} } };
+      let npcSpritesLoadPromise = null;
+
+      const tutorial = {
+        active: false,
+        phase: "idle",
+        sessionTriggered: false,
+        npcVisible: false,
+        npcPath: [],
+        dialogueIndex: 0,
+        heyShown: false,
+        npc: {
+          tileX: TUTORIAL_NPC_ENTER_TX,
+          tileY: TUTORIAL_NPC_TY,
+          fromTileX: TUTORIAL_NPC_ENTER_TX,
+          fromTileY: TUTORIAL_NPC_TY,
+          toTileX: TUTORIAL_NPC_ENTER_TX,
+          toTileY: TUTORIAL_NPC_TY,
+          moveT: 1,
+          dir: "right",
+          x: 0,
+          y: 0,
+          walkTime: 0,
+          walkFrame: 1,
+        },
+      };
+
+      function loadNpcSprites() {
+        if (npcSprites.loaded) return Promise.resolve();
+        if (npcSpritesLoadPromise) return npcSpritesLoadPromise;
+        npcSpritesLoadPromise = (async () => {
+          const jobs = [];
+          for (const dir of ["up", "down", "left", "right"]) {
+            for (const step of [1, 2, 3, 4]) {
+              const filename = NPC_SPRITE_FILES[dir][step];
+              const src = encodeURI(NPC_SPRITES_BASE + filename);
+              jobs.push(
+                loadImage(src).then((img) => {
+                  npcSprites.byDir[dir][step] = img;
+                }),
+              );
+            }
+          }
+          await Promise.all(jobs);
+          npcSprites.loaded = true;
+        })().catch(() => {
+          npcSpritesLoadPromise = null;
+          npcSprites.loaded = false;
+        });
+        return npcSpritesLoadPromise;
+      }
+
+      function tutorialClearInput() {
+        input.up = input.down = input.left = input.right = false;
+        input.run = false;
+      }
+
+      function tutorialTilesOnRow(x0, x1, ty) {
+        const tiles = [];
+        const step = x0 <= x1 ? 1 : -1;
+        for (let tx = x0; tx !== x1 + step; tx += step) tiles.push({ tx, ty });
+        return tiles;
+      }
+
+      function tutorialDirBetween(fromX, fromY, toX, toY) {
+        if (toX > fromX) return "right";
+        if (toX < fromX) return "left";
+        if (toY > fromY) return "down";
+        if (toY < fromY) return "up";
+        return "down";
+      }
+
+      function tutorialPlaceNpcAt(tx, ty, dir) {
+        const n = tutorial.npc;
+        n.tileX = tx;
+        n.tileY = ty;
+        n.fromTileX = tx;
+        n.fromTileY = ty;
+        n.toTileX = tx;
+        n.toTileY = ty;
+        n.moveT = 1;
+        n.dir = dir;
+        n.x = tileCenterX(tx);
+        n.y = tileCenterY(ty);
+        n.walkTime = 0;
+        n.walkFrame = 1;
+      }
+
+      function tutorialBeginNpcStep(nx, ny) {
+        const n = tutorial.npc;
+        if (n.tileX === nx && n.tileY === ny) return;
+        n.dir = tutorialDirBetween(n.tileX, n.tileY, nx, ny);
+        n.fromTileX = n.tileX;
+        n.fromTileY = n.tileY;
+        n.toTileX = nx;
+        n.toTileY = ny;
+        n.tileX = nx;
+        n.tileY = ny;
+        n.moveT = 0;
+      }
+
+      function tutorialAdvanceNpcPath() {
+        if (tutorial.npc.moveT < 1) return;
+        if (!tutorial.npcPath.length) return false;
+        const next = tutorial.npcPath.shift();
+        tutorialBeginNpcStep(next.tx, next.ty);
+        return true;
+      }
+
+      function tutorialUpdateNpcMovement(dt) {
+        const n = tutorial.npc;
+        const dur = player.moveDuration;
+        if (n.moveT < 1) {
+          n.moveT = Math.min(1, n.moveT + dt / Math.max(0.001, dur));
+          n.walkTime += dt;
+          n.walkFrame = (Math.floor(n.walkTime * player.walkFps) % 4) + 1;
+        } else {
+          n.walkFrame = 1;
+        }
+        const fx = tileCenterX(n.fromTileX);
+        const fy = tileCenterY(n.fromTileY);
+        const tx = tileCenterX(n.toTileX);
+        const ty = tileCenterY(n.toTileY);
+        n.x = fx + (tx - fx) * n.moveT;
+        n.y = fy + (ty - fy) * n.moveT;
+      }
+
+      function tutorialBeginNpcWalkIn() {
+        tutorial.npcPath = tutorialTilesOnRow(
+          TUTORIAL_NPC_ENTER_TX + 1,
+          TUTORIAL_NPC_STOP_TX,
+          TUTORIAL_NPC_STOP_TY,
+        );
+        tutorialAdvanceNpcPath();
+      }
+
+      function startTutorial() {
+        if (tutorial.active) return;
+        tutorial.active = true;
+        tutorial.phase = "hey";
+        tutorial.npcVisible = false;
+        tutorial.npcPath = [];
+        tutorial.heyShown = false;
+        tutorialClearInput();
+
+        loadNpcSprites().then(() => {
+          if (!tutorial.active) return;
+          tutorialPlaceNpcAt(TUTORIAL_NPC_ENTER_TX, TUTORIAL_NPC_TY, "right");
+          tutorial.npcVisible = true;
+          loadGameAudioAssets().then(() => {
+            if (!tutorial.active) return;
+            openMessageBox(TUTORIAL_NPC_HEY, { talk: "short" });
+            tutorial.heyShown = true;
+          });
+        });
+      }
+
+      function tryStartTutorialOnArrival(prevMoveT) {
+        if (tutorial.active || tutorial.sessionTriggered) return;
+        if (prevMoveT >= 1 || player.moveT < 1) return;
+        if (player.tileX !== TUTORIAL_TRIGGER_TX || player.tileY !== TUTORIAL_TRIGGER_TY) return;
+        tutorial.sessionTriggered = true;
+        startTutorial();
+      }
+
+      function updateTutorial(dt) {
+        if (!tutorial.active) return;
+
+        if (tutorial.phase === "hey") {
+          if (tutorial.heyShown && !messageBoxOpen) {
+            player.dir = "left";
+            player.moveT = 1;
+            player.walkFrame = 1;
+            tutorial.phase = "npc_walk_in";
+            tutorialBeginNpcWalkIn();
+          }
+          tutorialClearInput();
+          return;
+        }
+
+        if (tutorial.phase === "npc_walk_in" || tutorial.phase === "npc_walk_out") {
+          tutorialUpdateNpcMovement(dt);
+          if (tutorial.npc.moveT < 1) return;
+          if (tutorialAdvanceNpcPath()) return;
+          if (tutorial.phase === "npc_walk_in") {
+            tutorial.npc.dir = "right";
+            tutorial.phase = "dialogue";
+            tutorial.dialogueIndex = 0;
+            openMessageBox(TUTORIAL_DIALOGUE[0], { talk: "normal" });
+          } else if (tutorial.phase === "npc_walk_out") {
+            tutorial.npcVisible = false;
+            tutorial.active = false;
+            tutorial.phase = "idle";
+            tutorialClearInput();
+          }
+          return;
+        }
+
+        if (tutorial.phase === "dialogue") {
+          if (!messageBoxOpen) {
+            tutorial.phase = "npc_walk_out";
+            tutorial.npcPath = tutorialTilesOnRow(
+              TUTORIAL_NPC_STOP_TX - 1,
+              TUTORIAL_NPC_ENTER_TX,
+              TUTORIAL_NPC_TY,
+            );
+            tutorialAdvanceNpcPath();
+          }
+        }
+
+        tutorialClearInput();
+      }
+
+      function drawTutorialNpc(camX, camY) {
+        if (!tutorial.npcVisible || !npcSprites.loaded) return;
+
+        const n = tutorial.npc;
+        const frame = n.walkFrame;
+        const img = npcSprites.byDir[n.dir][frame] || npcSprites.byDir[n.dir][1];
+        if (!img) return;
+
+        const screenX = Math.round(n.x - camX);
+        const screenY = Math.round(n.y - camY);
+        const nh = img.naturalHeight || 1;
+        const nw = img.naturalWidth || 1;
+        const feetY = screenY + GRASS_TILE_PX / 2 - 2;
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(img, Math.round(screenX - nw / 2), Math.round(feetY - nh));
+        ctx.restore();
+      }
 
       function ensureBoardPathSignPlaced() {
         const { tx, ty } = BOARD_PATH_SIGN_TILE;
@@ -1106,6 +1415,53 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         }
       }
 
+      const SUTRO_TOWER_TILE = { tx: 36, ty: 52 };
+      const SUTRO_TOWER_DRAW_SCALE = 0.5;
+
+      function ensureSutroTowerPlaced() {
+        const { tx, ty } = SUTRO_TOWER_TILE;
+        if (!tileInWorldBounds(tx, ty)) return;
+        for (const k of Object.keys(decorOverlays)) {
+          if (decorOverlays[k] === T_SUTRO_TOWER && k !== `${tx},${ty}`) delete decorOverlays[k];
+        }
+        decorOverlays[`${tx},${ty}`] = T_SUTRO_TOWER;
+      }
+
+      function saveDevPlayerPosition() {
+        if (!TWIN_PEAKS_EDITOR_MODE) return;
+        try {
+          localStorage.setItem(
+            DEV_PLAYER_POS_STORAGE_KEY,
+            JSON.stringify({
+              tileX: player.tileX,
+              tileY: player.tileY,
+              dir: player.dir,
+            }),
+          );
+        } catch {
+          /* ignore quota / private mode */
+        }
+      }
+
+      function loadDevPlayerPosition() {
+        if (!TWIN_PEAKS_EDITOR_MODE) return null;
+        try {
+          const raw = localStorage.getItem(DEV_PLAYER_POS_STORAGE_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          const tx = Number(parsed?.tileX);
+          const ty = Number(parsed?.tileY);
+          const dir = parsed?.dir;
+          if (!Number.isFinite(tx) || !Number.isFinite(ty)) return null;
+          if (!tileInWorldBounds(tx, ty)) return null;
+          if (tileBlocksMovement(tx, ty)) return null;
+          const validDir = dir === "up" || dir === "down" || dir === "left" || dir === "right";
+          return { tx, ty, dir: validDir ? dir : "down" };
+        } catch {
+          return null;
+        }
+      }
+
       function replaceEditBundleIntoGlobals(bundle) {
         function clearThenAssign(target, src) {
           for (const k of Object.keys(target)) delete target[k];
@@ -1121,6 +1477,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         clearThenAssign(decorOverlays, bundle.decor);
         ensureBoardPathSignPlaced();
         ensureLamppostsPlaced();
+        ensureSutroTowerPlaced();
       }
 
       const MAP_UNDO_DEPTH = 10;
@@ -1536,12 +1893,38 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       let telescopeDragStartScrollX = 0;
       let telescopeBodyOverflowBefore = "";
       const TELESCOPE_PAN_SPEED_PX = 300;
+      const TELESCOPE_PANORAMA_SRC = `${VISUAL_ASSETS_ROOT}/view/Twinpeaks_fullview.png`;
       const telescopeOverlayEl = document.getElementById("telescope-overlay");
       const telescopeViewportEl = document.getElementById("telescope-viewport");
       const telescopePanoramaWrapEl = document.getElementById("telescope-panorama-wrap");
       const telescopePanoramaImgEl = telescopePanoramaWrapEl
         ? telescopePanoramaWrapEl.querySelector("img")
         : null;
+      let telescopePanoramaLoadPromise = null;
+
+      function ensureTelescopePanoramaLoaded() {
+        if (!telescopePanoramaImgEl) return Promise.resolve();
+        if (telescopePanoramaImgEl.naturalWidth > 0) return Promise.resolve();
+        if (telescopePanoramaLoadPromise) return telescopePanoramaLoadPromise;
+
+        telescopePanoramaLoadPromise = new Promise((resolve, reject) => {
+          const onReady = () => {
+            telescopePanoramaImgEl.removeEventListener("load", onReady);
+            telescopePanoramaImgEl.removeEventListener("error", onErr);
+            resolve();
+          };
+          const onErr = () => {
+            telescopePanoramaImgEl.removeEventListener("load", onReady);
+            telescopePanoramaImgEl.removeEventListener("error", onErr);
+            telescopePanoramaLoadPromise = null;
+            reject(new Error("telescope panorama failed to load"));
+          };
+          telescopePanoramaImgEl.addEventListener("load", onReady);
+          telescopePanoramaImgEl.addEventListener("error", onErr);
+          telescopePanoramaImgEl.src = encodeURI(TELESCOPE_PANORAMA_SRC);
+        });
+        return telescopePanoramaLoadPromise;
+      }
 
       function playerCanUseTelescope() {
         if (telescopeViewOpen || !map) return false;
@@ -1603,13 +1986,19 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         document.body.style.overflow = "hidden";
         telescopeOverlayEl.classList.remove("telescope-overlay--hidden");
         telescopeOverlayEl.setAttribute("aria-hidden", "false");
-        layoutTelescopePanorama();
-        if (telescopePanoramaMaxScroll > 0) {
-          telescopeScrollX = telescopePanoramaMaxScroll * 0.38;
-          applyTelescopeScroll();
-        }
         input.up = input.down = input.left = input.right = false;
         input.run = false;
+
+        ensureTelescopePanoramaLoaded()
+          .then(() => {
+            if (!telescopeViewOpen) return;
+            layoutTelescopePanorama();
+            if (telescopePanoramaMaxScroll > 0) {
+              telescopeScrollX = telescopePanoramaMaxScroll * 0.38;
+              applyTelescopeScroll();
+            }
+          })
+          .catch(() => {});
       }
 
       function closeTelescopeView() {
@@ -1643,7 +2032,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         return decorOverlays[`${bx},${by}`] === T_BOARD;
       }
 
-      function openMessageBox(text) {
+      function openMessageBox(text, opts) {
         if (!messageBoxOverlayEl || messageBoxOpen) return;
         messageBoxOpen = true;
         messageBoxFullText = text;
@@ -1656,6 +2045,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
         input.up = input.down = input.left = input.right = false;
         input.run = false;
+        if (opts?.talk) playTalkSound(opts.talk);
       }
 
       function closeMessageBox() {
@@ -1668,14 +2058,25 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         input.run = false;
       }
 
+      function showMessageBoxPage(text, opts) {
+        messageBoxFullText = text;
+        messageBoxVisibleChars = 0;
+        messageBoxCharTimer = 0;
+        messageBoxTypingDone = false;
+        if (messageBoxTextEl) messageBoxTextEl.textContent = "";
+        messageBoxArrowEl?.classList.remove("msgbox-arrow--visible");
+        if (opts?.talk) playTalkSound(opts.talk);
+      }
+
       function advanceMessageBox() {
-        if (!messageBoxOpen) return;
-        if (!messageBoxTypingDone) {
-          messageBoxVisibleChars = messageBoxFullText.length;
-          messageBoxTypingDone = true;
-          if (messageBoxTextEl) messageBoxTextEl.textContent = messageBoxFullText;
-          messageBoxArrowEl?.classList.add("msgbox-arrow--visible");
-          return;
+        if (!messageBoxOpen || !messageBoxTypingDone) return;
+        if (tutorial.active && tutorial.phase === "dialogue") {
+          const next = tutorial.dialogueIndex + 1;
+          if (next < TUTORIAL_DIALOGUE.length) {
+            tutorial.dialogueIndex = next;
+            showMessageBoxPage(TUTORIAL_DIALOGUE[next], { talk: "normal" });
+            return;
+          }
         }
         closeMessageBox();
       }
@@ -1788,8 +2189,9 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         }
 
         if (telescopePanoramaImgEl) {
-          if (telescopePanoramaImgEl.complete) layoutTelescopePanorama();
-          telescopePanoramaImgEl.addEventListener("load", layoutTelescopePanorama);
+          telescopePanoramaImgEl.addEventListener("load", () => {
+            if (telescopeViewOpen) layoutTelescopePanorama();
+          });
         }
         window.addEventListener("resize", () => {
           if (telescopeViewOpen) layoutTelescopePanorama();
@@ -1835,7 +2237,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         const jobs = [];
         for (const dir of ["up", "down", "left", "right"]) {
           for (const step of [1, 2, 3, 4]) {
-            const filename = RED_FILES[dir][step];
+            const filename = PLAYER_SPRITE_FILES[dir][step];
             const src = encodeURI(SPRITES_BASE + filename);
             jobs.push(
               loadImage(src).then((img) => {
@@ -1858,19 +2260,66 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       }
       let sfxGrassBuffer = null;
       let sfxWalkBuffer = null;
-      fetch("sounds/joentnt-walk-on-grass-1-291984.mp3")
-        .then((r) => r.arrayBuffer())
-        .then((buf) => sfxStepCtx.decodeAudioData(buf))
-        .then((decoded) => { sfxGrassBuffer = decoded; })
-        .catch(() => {});
-      fetch("sounds/normal_walk.mp3")
-        .then((r) => r.arrayBuffer())
-        .then((buf) => sfxStepCtx.decodeAudioData(buf))
-        .then((decoded) => { sfxWalkBuffer = decoded; })
-        .catch(() => {});
+      let sfxTalkShortBuffer = null;
+      const sfxTalkNormalBuffers = [null, null, null];
+      let talkNormalSoundIndex = 0;
+      const TALK_NORMAL_SRCS = [
+        "sounds/talk_normal_1.mp3",
+        "sounds/talk_normal_2.mp3",
+        "sounds/talk_normal_3.mp3",
+      ];
+      let gameAudioAssetsLoaded = false;
+      let gameAudioAssetsLoadPromise = null;
+
+      function loadGameAudioAssets() {
+        if (gameAudioAssetsLoaded) return Promise.resolve();
+        if (gameAudioAssetsLoadPromise) return gameAudioAssetsLoadPromise;
+
+        gameAudioAssetsLoadPromise = Promise.all([
+          fetch("sounds/joentnt-walk-on-grass-1-291984.mp3")
+            .then((r) => r.arrayBuffer())
+            .then((buf) => sfxStepCtx.decodeAudioData(buf))
+            .then((decoded) => {
+              sfxGrassBuffer = decoded;
+            }),
+          fetch("sounds/normal_walk.mp3")
+            .then((r) => r.arrayBuffer())
+            .then((buf) => sfxStepCtx.decodeAudioData(buf))
+            .then((decoded) => {
+              sfxWalkBuffer = decoded;
+            }),
+          fetch("sounds/talk_short.mp3")
+            .then((r) => r.arrayBuffer())
+            .then((buf) => sfxStepCtx.decodeAudioData(buf))
+            .then((decoded) => {
+              sfxTalkShortBuffer = decoded;
+            }),
+          ...TALK_NORMAL_SRCS.map((src, i) =>
+            fetch(src)
+              .then((r) => r.arrayBuffer())
+              .then((buf) => sfxStepCtx.decodeAudioData(buf))
+              .then((decoded) => {
+                sfxTalkNormalBuffers[i] = decoded;
+              }),
+          ),
+        ])
+          .then(() => {
+            windAmbienceAudio.src = "sounds/wind_normal.mp3";
+            windStrongAmbienceAudio.src = "sounds/wind_strong.mp3";
+            gameAudioAssetsLoaded = true;
+          })
+          .catch(() => {
+            gameAudioAssetsLoadPromise = null;
+          });
+
+        return gameAudioAssetsLoadPromise;
+      }
+
       const SFX_GRASS_STEP_VOL = 0.275 * UI.audioMult;
       const SFX_WALK_STEP_VOL = 0.6 * UI.audioMult;
-      function playStepSound(buffer, volume) {
+      const SFX_TALK_VOL = 0.55 * UI.audioMult;
+
+      function playSfxBuffer(buffer, volume) {
         if (!buffer) return;
         resumeSfxContext();
         const source = sfxStepCtx.createBufferSource();
@@ -1882,13 +2331,28 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         source.start(0);
       }
 
-      const windAmbienceAudio = new Audio("sounds/wind_normal.mp3");
+      function playTalkSound(kind) {
+        if (kind === "short") {
+          playSfxBuffer(sfxTalkShortBuffer, SFX_TALK_VOL);
+          return;
+        }
+        const n = sfxTalkNormalBuffers.length;
+        const buf = sfxTalkNormalBuffers[talkNormalSoundIndex % n];
+        talkNormalSoundIndex = (talkNormalSoundIndex + 1) % n;
+        playSfxBuffer(buf, SFX_TALK_VOL);
+      }
+
+      function playStepSound(buffer, volume) {
+        playSfxBuffer(buffer, volume);
+      }
+
+      const windAmbienceAudio = new Audio();
       windAmbienceAudio.loop = true;
-      windAmbienceAudio.preload = "auto";
+      windAmbienceAudio.preload = "none";
       windAmbienceAudio.volume = 0.28 * UI.audioMult;
-      const windStrongAmbienceAudio = new Audio("sounds/wind_strong.mp3");
+      const windStrongAmbienceAudio = new Audio();
       windStrongAmbienceAudio.loop = true;
-      windStrongAmbienceAudio.preload = "auto";
+      windStrongAmbienceAudio.preload = "none";
       windStrongAmbienceAudio.volume = 0;
       [windAmbienceAudio, windStrongAmbienceAudio].forEach((a) => {
         a.setAttribute("playsinline", "");
@@ -1902,6 +2366,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       let audioUnlockListenersRemoved = false;
       const _audioUnlockCap = { capture: true, passive: true };
       function tryStartWindAmbience() {
+        if (!gameAudioAssetsLoaded || !windAmbienceAudio.src) return;
         windAmbienceAudio.play().catch(() => {});
       }
       function updateWindStrongAmbienceAudio(dt) {
@@ -1913,7 +2378,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         } else if (vol > target) {
           windStrongAmbienceAudio.volume = Math.max(target, vol - WIND_STRONG_FADE_SPEED * dt);
         }
-        if (target > 0 && !windStrongAmbiencePlaying) {
+        if (target > 0 && !windStrongAmbiencePlaying && gameAudioAssetsLoaded && windStrongAmbienceAudio.src) {
           windStrongAmbienceAudio.play().catch(() => {});
           windStrongAmbiencePlaying = true;
         }
@@ -1932,12 +2397,16 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         window.removeEventListener("touchstart", unlockGameAudioFromUserGesture, _audioUnlockCap);
         window.removeEventListener("click", unlockGameAudioFromUserGesture, _audioUnlockCap);
       }
-      function unlockGameAudioFromUserGesture() {
+      function startGameAudioAfterUnlock() {
         if (windAmbienceGestureSeen) {
           syncWindModeFromPlayer();
           resumeSfxContext();
-          if (windAmbienceAudio.paused) tryStartWindAmbience();
-          if (windMode === "windy" && windStrongAmbienceAudio.paused) {
+          if (gameAudioAssetsLoaded && windAmbienceAudio.paused) tryStartWindAmbience();
+          if (
+            gameAudioAssetsLoaded &&
+            windMode === "windy" &&
+            windStrongAmbienceAudio.paused
+          ) {
             windStrongAmbienceAudio.play().catch(() => {});
             windStrongAmbiencePlaying = true;
           }
@@ -1945,21 +2414,30 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         }
         windAmbienceGestureSeen = true;
         resumeSfxContext();
-        tryStartWindAmbience();
+        if (gameAudioAssetsLoaded) tryStartWindAmbience();
         syncWindModeFromPlayer();
         updateWindStrongAmbienceAudio(0);
         removeAudioUnlockListeners();
       }
+
+      function unlockGameAudioFromUserGesture() {
+        loadGameAudioAssets().then(startGameAudioAfterUnlock).catch(startGameAudioAfterUnlock);
+      }
+
       function reviveAmbienceAfterBackground() {
         if (!windAmbienceGestureSeen) return;
-        syncWindModeFromPlayer();
-        resumeSfxContext();
-        tryStartWindAmbience();
-        if (windMode === "windy") {
-          windStrongAmbienceAudio.play().catch(() => {});
-          windStrongAmbiencePlaying = true;
-        }
-        updateWindStrongAmbienceAudio(0);
+        loadGameAudioAssets()
+          .then(() => {
+            syncWindModeFromPlayer();
+            resumeSfxContext();
+            tryStartWindAmbience();
+            if (windMode === "windy") {
+              windStrongAmbienceAudio.play().catch(() => {});
+              windStrongAmbiencePlaying = true;
+            }
+            updateWindStrongAmbienceAudio(0);
+          })
+          .catch(() => {});
       }
       /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
       function suspendGameAudioWhenLeavingPage() {
@@ -1980,6 +2458,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       });
       window.addEventListener("pagehide", suspendGameAudioWhenLeavingPage);
       window.addEventListener("beforeunload", suspendGameAudioWhenLeavingPage);
+      window.addEventListener("pagehide", saveDevPlayerPosition);
       window.addEventListener("pageshow", () => {
         reviveAmbienceAfterBackground();
       });
@@ -2000,7 +2479,12 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           objectTelescope.loaded = false;
         });
 
-      const ALL_OVERLAY_BITMAP_PATHS = { ...OVERLAY_PNG_PATHS, ...BOARD_PNG_PATHS, ...LAMPPOST_PNG_PATHS };
+      const ALL_OVERLAY_BITMAP_PATHS = {
+        ...OVERLAY_PNG_PATHS,
+        ...BOARD_PNG_PATHS,
+        ...LAMPPOST_PNG_PATHS,
+        ...SUTRO_TOWER_PNG_PATHS,
+      };
       const overlayBitmapImages = {};
       for (const tid of Object.keys(ALL_OVERLAY_BITMAP_PATHS)) {
         const id = Number(tid);
@@ -2359,6 +2843,182 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           windSprites.loaded = false;
         });
 
+      /** Ground birds: idle on their tile; flee when the player is close; respawn elsewhere when gone. */
+      const BIRD_FIXED_PLACEMENTS = [
+        { tx: 29, ty: 52 },
+        { tx: -5, ty: 51 },
+        { tx: 17, ty: 65 },
+        { tx: 12, ty: 58 },
+        { tx: 38, ty: 54 },
+      ];
+      const BIRD_MIN_COUNT = 5;
+      const BIRD_SCARE_RADIUS_TILES = 3;
+      const BIRD_RESPAWN_MIN_PLAYER_TILES = 5;
+      const BIRD_RESPAWN_MAX_PLAYER_TILES = 22;
+      const BIRD_FLEE_SPEED_PX = 250;
+      const BIRD_WING_FPS = 7;
+      const BIRD_DRAW_SCALE = 0.17;
+      const birdSprites = { loaded: false, walk: null, flyUp: null, flyDown: null };
+      let birds = [];
+
+      function createBird(tx, ty) {
+        return {
+          state: "idle",
+          tx,
+          ty,
+          x: tileCenterX(tx),
+          y: tileCenterY(ty),
+          faceDir: Math.random() < 0.5 ? -1 : 1,
+          wingTime: 0,
+          fleeVx: 0,
+          fleeVy: 0,
+        };
+      }
+
+      function initBirds() {
+        birds = [];
+        for (let i = 0; i < BIRD_FIXED_PLACEMENTS.length; i++) {
+          const p = BIRD_FIXED_PLACEMENTS[i];
+          if (isBirdAllowedTile(p.tx, p.ty)) birds.push(createBird(p.tx, p.ty));
+        }
+        maintainBirdPopulation();
+      }
+
+      function countLivingBirds() {
+        let n = 0;
+        for (let i = 0; i < birds.length; i++) {
+          if (birds[i].state !== "gone") n++;
+        }
+        return n;
+      }
+
+      function maintainBirdPopulation() {
+        let guard = 0;
+        while (countLivingBirds() < BIRD_MIN_COUNT && guard++ < BIRD_MIN_COUNT * 4) {
+          const spot = pickRandomBirdSpawnTile();
+          if (!spot) break;
+          birds.push(createBird(spot.tx, spot.ty));
+        }
+      }
+
+      Promise.all([
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/animals/bird/Bird_walk.png`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/animals/bird/Bird_fly_wings_up.png`)),
+        loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/animals/bird/Bird_fly_wings_down.png`)),
+      ])
+        .then(([walk, flyUp, flyDown]) => {
+          birdSprites.walk = walk;
+          birdSprites.flyUp = flyUp;
+          birdSprites.flyDown = flyDown;
+          birdSprites.loaded = true;
+        })
+        .catch(() => {
+          birdSprites.loaded = false;
+        });
+
+      function birdChebyshevDistToPlayer(b) {
+        return Math.max(Math.abs(player.tileX - b.tx), Math.abs(player.tileY - b.ty));
+      }
+
+      function birdIdleOnGrass(b) {
+        return b.state === "idle" && cellAtTile(b.tx, b.ty) === T_GRASS;
+      }
+
+      function birdIdleOnFlower(b) {
+        return b.state === "idle" && cellAtTile(b.tx, b.ty) === T_FLOWER;
+      }
+
+      function updateOneBird(b, dt) {
+        if (b.state === "gone") return;
+
+        if (b.state === "idle") {
+          b.x = tileCenterX(b.tx);
+          b.y = tileCenterY(b.ty);
+
+          if (birdChebyshevDistToPlayer(b) <= BIRD_SCARE_RADIUS_TILES) {
+            b.state = "fleeing";
+            b.wingTime = 0;
+            const dx = b.x - player.x;
+            const dy = b.y - player.y;
+            const len = Math.hypot(dx, dy) || 1;
+            b.fleeVx = (dx / len) * BIRD_FLEE_SPEED_PX;
+            b.fleeVy = (dy / len) * BIRD_FLEE_SPEED_PX;
+            b.faceDir = b.fleeVx >= 0 ? 1 : -1;
+          }
+          return;
+        }
+
+        b.wingTime += dt;
+        b.x += b.fleeVx * dt;
+        b.y += b.fleeVy * dt;
+        if (Math.abs(b.fleeVx) > 8) b.faceDir = b.fleeVx > 0 ? 1 : -1;
+
+        const { camX, camY, viewW, viewH } = getCamera();
+        const sx = b.x - camX;
+        const sy = b.y - camY;
+        if (sx < -160 || sx > viewW + 160 || sy < -160 || sy > viewH + 160) respawnBird(b);
+      }
+
+      function drawOneBird(b, camX, camY, viewW, viewH) {
+        if (b.state === "gone" || !birdSprites.loaded) return;
+
+        let img;
+        if (b.state === "idle") img = birdSprites.walk;
+        else {
+          const wingsUp = Math.floor(b.wingTime * BIRD_WING_FPS) % 2 === 0;
+          img = wingsUp ? birdSprites.flyUp : birdSprites.flyDown;
+        }
+        if (!img) return;
+
+        const srcW = img.naturalWidth || 32;
+        const srcH = img.naturalHeight || 32;
+        const dw = srcW * BIRD_DRAW_SCALE;
+        const dh = srcH * BIRD_DRAW_SCALE;
+        const tw = GRASS_TILE_PX;
+
+        let dx;
+        let dy;
+        if (b.state === "idle") {
+          dx = b.x - camX - dw / 2;
+          dy = (b.ty + 1) * tw - camY - dh;
+        } else {
+          dx = b.x - camX - dw / 2;
+          dy = b.y - camY - dh / 2;
+        }
+
+        if (dx + dw < 0 || dx > viewW || dy + dh < 0 || dy > viewH) return;
+
+        ctx.save();
+        ctx.imageSmoothingEnabled = false;
+        if (b.faceDir < 0) {
+          ctx.translate(Math.round(dx + dw), Math.round(dy));
+          ctx.scale(-1, 1);
+          ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, dw, dh);
+        } else {
+          ctx.drawImage(img, 0, 0, srcW, srcH, Math.round(dx), Math.round(dy), dw, dh);
+        }
+        ctx.restore();
+      }
+
+      function updateBird(dt) {
+        if (telescopeViewOpen || messageBoxOpen) return;
+        for (let i = 0; i < birds.length; i++) {
+          const b = birds[i];
+          if (b.state === "gone") respawnBird(b);
+          else updateOneBird(b, dt);
+        }
+        maintainBirdPopulation();
+      }
+
+      function drawBird(camX, camY, viewW, viewH, stateFilter) {
+        if (!birdSprites.loaded) return;
+        for (let i = 0; i < birds.length; i++) {
+          const b = birds[i];
+          if (stateFilter && b.state !== stateFilter) continue;
+          drawOneBird(b, camX, camY, viewW, viewH);
+        }
+      }
+
       const grassSplash = { loaded: false, img: null };
       loadImage(encodeURI(`${VISUAL_ASSETS_ROOT}/grass/grass_splash.svg`))
         .then((img) => {
@@ -2500,6 +3160,58 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         if (c === T_WALL || isMapCellOverlayObject(c)) return true;
         if (c !== T_MOUNTAIN) return false;
         return mountainBrownFaceKeyForCollision(tx, ty) !== "center";
+      }
+
+      /** Void, grass, flowers, walkable mountain center, or pedestrian street (not path / car street). */
+      function isBirdAllowedTile(tx, ty) {
+        if (!tileInPlayableBounds(tx, ty) || tileBlocksMovement(tx, ty)) return false;
+        const c = cellAtTile(tx, ty);
+        const k = `${tx},${ty}`;
+        if (c === T_VOID || c === T_GRASS || c === T_FLOWER) return true;
+        if (c === T_MOUNTAIN) return mountainBrownFaceKeyForCollision(tx, ty) === "center";
+        if (c === T_EARTH) return streetCells.has(k);
+        return false;
+      }
+
+      function birdTileOccupied(tx, ty) {
+        for (let i = 0; i < birds.length; i++) {
+          const o = birds[i];
+          if (o.state === "idle" && o.tx === tx && o.ty === ty) return true;
+        }
+        return false;
+      }
+
+      function pickRandomBirdSpawnTile() {
+        const xSpan = PLAYABLE_X_MAX - PLAYABLE_X_MIN + 1;
+        const ySpan = PLAYABLE_Y_MAX - PLAYABLE_Y_MIN + 1;
+        let fallback = null;
+
+        for (let t = 0; t < 64; t++) {
+          const tx = PLAYABLE_X_MIN + ((Math.random() * xSpan) | 0);
+          const ty = PLAYABLE_Y_MIN + ((Math.random() * ySpan) | 0);
+          if (!isBirdAllowedTile(tx, ty) || birdTileOccupied(tx, ty)) continue;
+
+          const dist = Math.max(Math.abs(player.tileX - tx), Math.abs(player.tileY - ty));
+          if (dist >= BIRD_RESPAWN_MIN_PLAYER_TILES && dist <= BIRD_RESPAWN_MAX_PLAYER_TILES) {
+            return { tx, ty };
+          }
+          if (!fallback) fallback = { tx, ty };
+        }
+
+        if (fallback) return fallback;
+
+        for (let t = 0; t < 32; t++) {
+          const tx = PLAYABLE_X_MIN + ((Math.random() * xSpan) | 0);
+          const ty = PLAYABLE_Y_MIN + ((Math.random() * ySpan) | 0);
+          if (isBirdAllowedTile(tx, ty) && !birdTileOccupied(tx, ty)) return { tx, ty };
+        }
+        return null;
+      }
+
+      function respawnBird(b) {
+        const spot = pickRandomBirdSpawnTile();
+        if (!spot) return;
+        Object.assign(b, createBird(spot.tx, spot.ty));
       }
 
       /** Rim: top two mountain rows use “bottom” only; elsewhere use explicit paint or default brown `bottom` (no neighbor autotile). */
@@ -2898,12 +3610,16 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           const img = slot.img;
           const wx = tx * tw - camX;
           const wy = ty * tw - camY;
-          const nw = img.naturalWidth || 32;
-          const nh = img.naturalHeight || 32;
-          const dx = wx + (tw - nw) * 0.5;
-          const dy = wy + tw - nh;
-          if (dx + nw < 0 || dx > viewW || dy + nh < 0 || dy > viewH) continue;
-          ctx.drawImage(img, dx, dy);
+          const srcW = img.naturalWidth || 32;
+          const srcH = img.naturalHeight || 32;
+          const scale = dv === T_SUTRO_TOWER ? SUTRO_TOWER_DRAW_SCALE : 1;
+          const dw = srcW * scale;
+          const dh = srcH * scale;
+          const dx = wx + (tw - dw) * 0.5;
+          const dy = wy + tw - dh;
+          if (dx + dw < 0 || dx > viewW || dy + dh < 0 || dy > viewH) continue;
+          if (scale === 1) ctx.drawImage(img, dx, dy);
+          else ctx.drawImage(img, 0, 0, srcW, srcH, dx, dy, dw, dh);
         }
         ctx.restore();
       }
@@ -3056,13 +3772,23 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       }
 
       function drawGrassFrontPatchExcept(camX, camY, viewW, viewH, skipTy, skipTx) {
+        const skipKeys = new Set();
+        skipKeys.add(`${skipTx},${skipTy}`);
+        drawGrassFrontPatchExceptKeys(camX, camY, viewW, viewH, skipKeys);
+      }
+
+      function drawGrassFrontPatchExceptKeys(camX, camY, viewW, viewH, skipKeys) {
         if (!grass.loaded || !grass.front) return;
+        if (!skipKeys || skipKeys.size === 0) {
+          drawGrassFrontPatchAll(camX, camY, viewW, viewH);
+          return;
+        }
 
         const { tx0, ty0, tx1, ty1 } = viewTileRange(camX, camY, viewW, viewH);
         for (let ty = ty0; ty <= ty1; ty++) {
           for (let tx = tx0; tx <= tx1; tx++) {
             if (map[ty][tx - MAP_X_MIN] !== T_GRASS) continue;
-            if (ty === skipTy && tx === skipTx) continue;
+            if (skipKeys.has(`${tx},${ty}`)) continue;
             drawGrassFrontAtWorld(camX, camY, tx * GRASS_TILE_PX, ty * GRASS_TILE_PX);
           }
         }
@@ -3120,7 +3846,17 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       }
 
       function drawFlowerFrontPatchExcept(camX, camY, viewW, viewH, skipTy, skipTx) {
+        const skipKeys = new Set();
+        skipKeys.add(`${skipTx},${skipTy}`);
+        drawFlowerFrontPatchExceptKeys(camX, camY, viewW, viewH, skipKeys);
+      }
+
+      function drawFlowerFrontPatchExceptKeys(camX, camY, viewW, viewH, skipKeys) {
         if (!flower.loaded || !flower.front) return;
+        if (!skipKeys || skipKeys.size === 0) {
+          drawFlowerFrontPatchAll(camX, camY, viewW, viewH);
+          return;
+        }
 
         ctx.save();
         ctx.imageSmoothingEnabled = false;
@@ -3128,7 +3864,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         for (let ty = ty0; ty <= ty1; ty++) {
           for (let tx = tx0; tx <= tx1; tx++) {
             if (map[ty][tx - MAP_X_MIN] !== T_FLOWER) continue;
-            if (ty === skipTy && tx === skipTx) continue;
+            if (skipKeys.has(`${tx},${ty}`)) continue;
             const fi = flowerRustleStep(tx, ty, 0.95) % 6;
             const img = (flower.frontFrames && flower.frontFrames[fi]) || flower.front;
             const fw = img.naturalWidth || 32;
@@ -3370,6 +4106,11 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           updateTelescopePan(dt);
           return;
         }
+        if (tutorial.active) {
+          updateTutorial(dt);
+          if (messageBoxOpen) updateMessageBox(dt);
+          return;
+        }
         if (messageBoxOpen) {
           updateMessageBox(dt);
           return;
@@ -3429,6 +4170,10 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         // Advance movement tween.
         const dur = input.run ? player.moveDuration / player.runMultiplier : player.moveDuration;
         if (player.moveT < 1) player.moveT = Math.min(1, player.moveT + dt / Math.max(0.001, dur));
+
+        if (prevMoveT < 1 && player.moveT === 1) saveDevPlayerPosition();
+
+        tryStartTutorialOnArrival(prevMoveT);
 
         if (
           prevMoveT < 1 &&
@@ -3520,6 +4265,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           windSummitNextGustTime = worldTime + 0.5 + Math.random() * 0.8;
         }
 
+        updateBird(dt);
         updateWind(dt);
         touchGrassTilesUnderWind();
         pruneGrassWindLastHit();
@@ -3623,32 +4369,72 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           ctx.restore();
         }
 
-        // Grass layering: moving UP onto grass draws every front strip before Red so nothing
-        // occludes him during the step. Moving DOWN (or idle / horizontal) keeps Pokémon-style
-        // depth: skip destination tile's strip in this pass, draw player, then draw that strip.
+        // Grass / flower layering: skip tiles where Red or birds sit between back and front strips.
         const toGrass = cellAtTile(player.toTileX, player.toTileY) === T_GRASS;
         const moving = player.moveT < 1;
         const walkUpOntoGrass =
           moving && toGrass && player.toTileY < player.fromTileY;
 
-        if (!toGrass) {
-          drawGrassFrontPatchAll(camX, camY, viewW, viewH);
-        } else if (walkUpOntoGrass) {
-          drawGrassFrontPatchAll(camX, camY, viewW, viewH);
-        } else {
-          drawGrassFrontPatchExcept(camX, camY, viewW, viewH, tcy, tcx);
+        const grassFrontSkipKeys = new Set();
+        const flowerFrontSkipKeys = new Set();
+        for (let i = 0; i < birds.length; i++) {
+          const b = birds[i];
+          if (b.state !== "idle") continue;
+          if (birdIdleOnGrass(b)) grassFrontSkipKeys.add(`${b.tx},${b.ty}`);
+          if (birdIdleOnFlower(b)) flowerFrontSkipKeys.add(`${b.tx},${b.ty}`);
+        }
+        if (
+          tutorial.npcVisible &&
+          tutorial.npc.moveT >= 1 &&
+          cellAtTile(tutorial.npc.tileX, tutorial.npc.tileY) === T_GRASS
+        ) {
+          grassFrontSkipKeys.add(`${tutorial.npc.tileX},${tutorial.npc.tileY}`);
         }
 
-        if (inFlower) drawFlowerFrontPatchExcept(camX, camY, viewW, viewH, tcy, tcx);
+        if (!toGrass) {
+          if (grassFrontSkipKeys.size > 0) drawGrassFrontPatchExceptKeys(camX, camY, viewW, viewH, grassFrontSkipKeys);
+          else drawGrassFrontPatchAll(camX, camY, viewW, viewH);
+        } else if (walkUpOntoGrass) {
+          if (grassFrontSkipKeys.size > 0) drawGrassFrontPatchExceptKeys(camX, camY, viewW, viewH, grassFrontSkipKeys);
+          else drawGrassFrontPatchAll(camX, camY, viewW, viewH);
+        } else {
+          grassFrontSkipKeys.add(`${tcx},${tcy}`);
+          drawGrassFrontPatchExceptKeys(camX, camY, viewW, viewH, grassFrontSkipKeys);
+        }
+
+        if (inFlower) flowerFrontSkipKeys.add(`${tcx},${tcy}`);
+        if (flowerFrontSkipKeys.size > 0) drawFlowerFrontPatchExceptKeys(camX, camY, viewW, viewH, flowerFrontSkipKeys);
         else drawFlowerFrontPatchAll(camX, camY, viewW, viewH);
 
         drawDecorOverlayTiles(camX, camY, viewW, viewH, decorBigRockBeforePlayerOnly);
 
+        drawBird(camX, camY, viewW, viewH, "idle");
+        drawTutorialNpc(camX, camY);
         drawPlayer(screenX, screenY);
         drawDecorOverlayTiles(camX, camY, viewW, viewH, decorOverlayDrawAfterPlayer);
 
         if (toGrass && !walkUpOntoGrass) drawGrassFrontAtTile(camX, camY, tcx, tcy);
+        for (let i = 0; i < birds.length; i++) {
+          const b = birds[i];
+          if (b.state !== "idle" || !birdIdleOnGrass(b)) continue;
+          drawGrassFrontAtTile(camX, camY, b.tx, b.ty);
+        }
+        if (
+          tutorial.npcVisible &&
+          tutorial.npc.moveT >= 1 &&
+          cellAtTile(tutorial.npc.tileX, tutorial.npc.tileY) === T_GRASS
+        ) {
+          drawGrassFrontAtTile(camX, camY, tutorial.npc.tileX, tutorial.npc.tileY);
+        }
+
         if (inFlower) drawFlowerFrontAtTile(camX, camY, tcx, tcy);
+        for (let i = 0; i < birds.length; i++) {
+          const b = birds[i];
+          if (b.state !== "idle" || !birdIdleOnFlower(b)) continue;
+          drawFlowerFrontAtTile(camX, camY, b.tx, b.ty);
+        }
+
+        drawBird(camX, camY, viewW, viewH, "fleeing");
 
         drawGrassSplashes(camX, camY, viewW, viewH);
 
@@ -3754,14 +4540,17 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         }
         applyStartupMapEditLayers();
 
-        const startTile = findPlayerStart();
+        const savedDevPos = loadDevPlayerPosition();
+        const startTile = savedDevPos || findPlayerStart();
         player.tileX = startTile.tx;
         player.tileY = startTile.ty;
-        player.dir = "down";
+        player.dir = savedDevPos?.dir || "down";
         player.fromTileX = player.toTileX = player.tileX;
         player.fromTileY = player.toTileY = player.tileY;
         player.x = tileCenterX(player.tileX);
         player.y = tileCenterY(player.tileY);
+        initBirds();
+        saveDevPlayerPosition();
 
         if (TWIN_PEAKS_EDITOR_MODE) {
           const { initTwinPeaksEditor } = await import("./js/editor.js");
@@ -3819,6 +4608,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
             T_ROCK_BIG,
             T_BOARD,
             T_LAMPPOST,
+            T_SUTRO_TOWER,
             T_VEHICLE_BICYCLE_LEFT,
             T_VEHICLE_BICYCLE_RIGHT,
             T_VEHICLE_TRUCK,

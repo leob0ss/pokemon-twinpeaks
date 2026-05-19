@@ -47,13 +47,25 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <canvas id="c"></canvas>
+    <div id="game-stage">
+      <div id="game-frame">
+        <canvas id="c"></canvas>
+      </div>
+      <div id="message-box-overlay" class="message-box--hidden" aria-hidden="true" role="dialog" aria-live="polite">
+        <div class="msgbox-frame">
+          <div class="msgbox-inner">
+            <p class="msgbox-text" id="message-box-text"></p>
+            <span class="msgbox-arrow" id="message-box-arrow" aria-hidden="true">▼</span>
+          </div>
+        </div>
+      </div>
+    </div>
     <div id="telescope-overlay" class="telescope-overlay--hidden" aria-hidden="true">
       <div class="telescope-stage">
         <div class="telescope-ring">
           <div class="telescope-viewport" id="telescope-viewport">
             <div id="telescope-panorama-wrap">
-              <img src="Visual_assets/view/Twinpeaks_fullview.png" alt="San Francisco skyline from Twin Peaks" draggable="false" />
+              <img alt="San Francisco skyline from Twin Peaks" draggable="false" />
             </div>
             <div class="telescope-edge telescope-edge-left" id="telescope-edge-left" aria-label="Pan left">
               <span class="telescope-edge-label">‹</span>
@@ -72,14 +84,6 @@
           <span class="telescope-caption-mouse">Hover the left or right edge to pan · Esc to close</span>
           <span class="telescope-caption-touch">Swipe the view or hold Left / Right · Tap × to close</span>
         </p>
-      </div>
-    </div>
-    <div id="message-box-overlay" class="message-box--hidden" aria-hidden="true" role="dialog" aria-live="polite">
-      <div class="msgbox-frame">
-        <div class="msgbox-inner">
-          <p class="msgbox-text" id="message-box-text"></p>
-          <span class="msgbox-arrow" id="message-box-arrow" aria-hidden="true">▼</span>
-        </div>
       </div>
     </div>
     <div id="gba-shell">

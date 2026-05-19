@@ -150,6 +150,7 @@ export function initTwinPeaksEditor(g) {
     T_ROCK_BIG,
     T_BOARD,
     T_LAMPPOST,
+    T_SUTRO_TOWER,
     T_VEHICLE_BICYCLE_LEFT,
     T_VEHICLE_BICYCLE_RIGHT,
     T_VEHICLE_TRUCK,
@@ -219,6 +220,7 @@ export function initTwinPeaksEditor(g) {
             ["Rock — big", T_ROCK_BIG],
             ["Board (path sign)", T_BOARD],
             ["Lamppost", T_LAMPPOST],
+            ["Sutro Tower", T_SUTRO_TOWER],
           ],
           children: [
             {

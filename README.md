@@ -2,7 +2,7 @@
 
 A top-down Pokémon DS-style walkaround built with **vanilla JavaScript**, **Canvas 2D**, and **ES modules** — no frameworks, no bundler, no npm dependencies.
 
-Walk around a hand-painted tile map, explore mountains, paths, swamp streets, flowers, log fences, rock formations, and more — all rendered in real time on an HTML canvas with pixel-art scaling.
+Walk around a hand-painted tile map of Twin Peaks, chase birds, read signs, use the telescope, and meet Leo in a short intro — all rendered in real time on an HTML canvas with pixel-art scaling.
 
 ## How it works
 
@@ -26,6 +26,24 @@ Terrain types include:
 
 Objects like **log fences**, **ledges**, **rocks**, the **path sign board**, and **lampposts** use a separate overlay layer (`fenceOverlays`, `decorOverlays`) so they draw on top of whatever terrain is underneath without replacing it in the map grid. This mirrors how Pokémon games layer props over terrain.
 
+### Desktop game window
+
+On **mouse / trackpad** devices (`pointer: fine`), the canvas lives inside a centered **960×540** frame (`#game-stage` / `#game-frame`) instead of filling the monitor. That keeps the camera from revealing the entire map width on large screens and reduces pixels drawn per frame. **Touch** devices still use the full-screen **GBA-style shell** with an on-screen D-pad.
+
+### Intro tutorial
+
+Step onto tile **(2, 99)** once per page load to trigger a short cutscene:
+
+1. **Leo** (character #2) shouts **“Hey!”** from off-screen west **(-12, 99)**
+2. Your character turns to face him
+3. He walks in; multi-page dialogue plays with **talk blips** (`talk_short` for “Hey!”, rotating `talk_normal_1`–`3` for the rest)
+4. Text **types in progressively** — advance only after each line finishes (Space / Enter / Z / X or tap)
+5. He walks back off-screen; movement resumes
+
+### Birds
+
+Several birds roam the **playable area** (roughly **x -26…44**, **y 40…103**). Walk near one and it flees; when all are chased away, new ones respawn on valid grass, flowers, paths, and similar tiles.
+
 ### Rendering
 
 A `requestAnimationFrame` loop calls `render()` each frame, which paints layers in depth order:
@@ -36,20 +54,25 @@ A `requestAnimationFrame` loop calls `render()` each frame, which paints layers 
 5. Walls, map objects (telescope, vehicles), fence overlays
 6. Short decor overlays (ledge, small/medium rocks, path board, etc.) — not the tall props that sort around the player
 7. Grass and flower front strips (with passes that respect the player’s tile while walking)
-8. Tall decor (big rocks, lampposts) drawn before the player when they stand south of the prop’s base
-9. Player sprite (4-directional, 4-frame walk cycle)
-10. Tall decor drawn after the player when they stand north of the prop — props and flowers keep a stable order relative to each other; only player vs tall props is dynamic
-11. Grass splashes and wind gusts
+8. Tall decor (big rocks, lampposts, Sutro Tower) drawn before the player when they stand south of the prop’s base
+9. Player sprite (4-directional, 4-frame walk cycle; **character_3** assets)
+10. Birds (idle layered in grass/flowers; fleeing birds draw on top)
+11. Tall decor drawn after the player when they stand north of the prop — props and flowers keep a stable order relative to each other; only player vs tall props is dynamic
+12. Grass splashes and wind gusts
 
-**Path sign:** the board blocks that tile. Stand directly below it, face **up**, press **↑** for a Pokémon-style text box. **Space / Enter / Z / X** or tap the box advances and closes.
+**Path sign:** the board sits at **(2, 95)**. Stand on **(2, 96)**, face **up**, press **↑** (or **W**) for a Pokémon-style text box. Lines type in fully before you can advance. **Space / Enter / Z / X** or tap the box goes to the next line or closes.
 
-**Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or tap down on the mobile shell). A circular panorama (`Visual_assets/view/Twinpeaks_fullview.png`) opens; pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **×** closes it.
+**Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or **S** / tap down on the mobile shell). The panorama (`Visual_assets/view/Twinpeaks_fullview.png`) is **lazy-loaded** on first open. Pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **×** closes it.
 
 Wind ambience is **position-based**: stronger layered wind when the player is north of the summit threshold (see `WIND_NORMAL_MIN_TILE_Y` in `main.js`). In `?devMap`, a small HUD shows wind mode and row.
 
 ### Movement & collision
 
-Arrow keys move the player tile-by-tile with smooth interpolation. Shift toggles running (faster step speed). Collision checks block movement into walls, mountains (unless the brown face is walkable), fences, solid decor overlays (ledge, rocks, board, lamppost, etc.), and map-edge boundaries.
+**Arrow keys** or **WASD** move the player tile-by-tile with smooth interpolation. Shift toggles running (faster step speed). Collision checks block movement into walls, mountains (unless the brown face is walkable), fences, solid decor overlays (ledge, rocks, board, lamppost, etc.), and map-edge boundaries.
+
+### Audio
+
+Footsteps and wind ambience load on the **first user gesture** (click, tap, or key) so the initial page load stays light. Dialogue uses separate talk SFX (see intro tutorial above).
 
 ### Sprites & assets
 
@@ -65,7 +88,8 @@ js/editor.js          Map editor UI + wiring (loaded only with `?devMap`)
 styles.css            All game + shell styles
 published-map.json    Shipped map edits (the world visitors walk on)
 Visual_assets/        All raster/vector map & character art (paths via `VISUAL_ASSETS_ROOT` in main.js)
-  characters/         Player sprite PNGs (Red, 4-dir × 4-step)
+  animals/            Bird sprite PNGs (fly / walk)
+  characters/         Player (character_3) and NPC (character_2) PNGs, 4-dir × 4-step
   grass/              Grass and flower tile SVGs/PNGs
   earth/              Earth path tile SVGs + corner PNGs
   street/             Road tile SVGs + corner PNGs
@@ -74,13 +98,13 @@ Visual_assets/        All raster/vector map & character art (paths via `VISUAL_A
   fence/              Log fence PNGs (7 variants)
   ledge/              Ledge PNG
   rocks/              Rock PNGs (small, medium, big)
-  objects/            Telescope SVG, path board PNG, lamppost PNG
+  objects/            Telescope SVG, path board PNG, lamppost PNG, Sutro Tower PNG
   view/               Telescope panorama PNG (full skyline)
   stair/              Stairs PNG
   vehicles/           Vehicle PNGs (bicycles, truck)
   water/              Water tile PNG
   wind/               Wind gust SVGs (small, medium, large)
-sounds/               Footstep and wind ambience audio
+sounds/               Footsteps, wind ambience, talk blips (short + normal ×3)
 reference_map/        Design reference files
 map_saves/            Older published-map.json backups (V1–V4)
 ```
@@ -99,10 +123,10 @@ Then open [http://localhost:5173](http://localhost:5173) (add `?devMap` for the 
 
 | Key | Action |
 |-----|--------|
-| Arrow keys | Move; when eligible, **↓** opens the telescope view, **↑** reads the path sign |
+| Arrow keys / **W A S D** | Move; when eligible, **↓** / **S** opens the telescope, **↑** / **W** reads the path sign |
 | Shift (hold) | Run |
 | Esc | Close telescope view |
-| Space / Enter / Z / X | Advance or close the sign text box when it is open |
+| Space / Enter / Z / X | Advance dialogue or close the text box (only after the current line has finished typing) |
 
 On narrow / touch screens, a **GBA-style shell** appears: the D-pad maps to arrow keys for movement.
 

@@ -7,13 +7,66 @@
           "Segoe UI Emoji";
         overflow: hidden;
       }
+
       canvas {
-        position: fixed;
-        inset: 0;
-        width: 100vw;
-        height: 100vh;
         display: block;
         image-rendering: pixelated;
+      }
+
+      /* Desktop: fixed game window (camera + culling follow this box, not the full monitor). */
+      @media (pointer: fine) {
+        #game-stage {
+          position: fixed;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          width: min(960px, 100vw);
+          height: min(540px, 100vh);
+          z-index: 1;
+          box-shadow:
+            0 0 0 4px #3a9a88,
+            0 0 0 8px #2a7a6a,
+            0 16px 48px rgba(0, 0, 0, 0.22);
+        }
+        #game-frame {
+          position: absolute;
+          inset: 0;
+          overflow: hidden;
+          background: #1a1a2e;
+        }
+        #game-frame canvas {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+        }
+        #message-box-overlay {
+          position: absolute;
+          inset: 0;
+          z-index: 2;
+          padding: 0 10px 14px;
+        }
+        #message-box-overlay .msgbox-frame {
+          width: min(100%, 720px);
+        }
+      }
+
+      /* Mobile: stage wrapper is layout-transparent; canvas moves into GBA shell via JS. */
+      @media (pointer: coarse) {
+        #game-stage {
+          display: contents;
+        }
+        #game-frame {
+          display: none;
+        }
+        #message-box-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 10001;
+          padding: 0 10px 14px;
+          box-sizing: border-box;
+        }
       }
 
       /* ── GBA-style mobile shell ── */
@@ -437,14 +490,9 @@
 
       /* ── Pokémon-style text box ── */
       #message-box-overlay {
-        position: fixed;
-        inset: 0;
-        z-index: 10001;
         display: flex;
         align-items: flex-end;
         justify-content: center;
-        padding: 0 10px 14px;
-        box-sizing: border-box;
         pointer-events: auto;
         touch-action: manipulation;
       }
@@ -468,7 +516,7 @@
         border: 3px solid #484858;
         border-radius: 4px;
         padding: 18px 22px 30px;
-        min-height: 88px;
+        min-height: 50px;
         box-shadow: inset 0 2px 0 #fff, inset 0 -2px 0 #d0d0d8;
       }
       .msgbox-text {
