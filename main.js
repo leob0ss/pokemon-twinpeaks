@@ -2348,7 +2348,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const SFX_TALK_VOL = 0.55 * UI.audioMult;
 
       function playSfxBuffer(buffer, volume) {
-        if (!buffer) return;
+        if (!buffer || !volumePrefaceDismissed) return;
         resumeSfxContext();
         const source = sfxStepCtx.createBufferSource();
         source.buffer = buffer;
@@ -2404,6 +2404,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       let windStrongAudioGraphReady = false;
       let windStrongGainNode = null;
       let windAmbienceGestureSeen = false;
+      let volumePrefaceDismissed = false;
       let audioUnlockListenersRemoved = false;
       const _audioUnlockCap = { capture: true, passive: true };
       function tryStartWindAmbience() {
@@ -2533,8 +2534,28 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       }
 
       function unlockGameAudioFromUserGesture() {
+        if (!volumePrefaceDismissed) return;
         loadGameAudioAssets().then(startGameAudioAfterUnlock).catch(startGameAudioAfterUnlock);
       }
+
+      function initVolumePreface() {
+        const overlay = document.getElementById("volume-preface-overlay");
+        const okBtn = document.getElementById("volume-preface-ok");
+        if (!overlay || !okBtn) {
+          volumePrefaceDismissed = true;
+          return;
+        }
+
+        overlay.setAttribute("aria-hidden", "false");
+        okBtn.addEventListener("click", () => {
+          volumePrefaceDismissed = true;
+          overlay.classList.add("volume-preface--hidden");
+          overlay.setAttribute("aria-hidden", "true");
+          unlockGameAudioFromUserGesture();
+        });
+      }
+
+      initVolumePreface();
 
       function reviveAmbienceAfterBackground() {
         if (!windAmbienceGestureSeen) return;

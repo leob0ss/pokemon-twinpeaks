@@ -28,7 +28,9 @@ Objects like **log fences**, **ledges**, **rocks**, the **path sign board**, and
 
 ### Desktop game window
 
-On **mouse / trackpad** devices (`pointer: fine`), the canvas lives inside a centered **960×540** frame (`#game-stage` / `#game-frame`) instead of filling the monitor. That keeps the camera from revealing the entire map width on large screens and reduces pixels drawn per frame. **Touch** devices still use the full-screen **GBA-style shell** with an on-screen D-pad.
+On **mouse / trackpad** devices (`pointer: fine`), the canvas lives inside a centered responsive **16:9** frame (`#game-stage` / `#game-frame`) that scales between **560px** and **880px** wide (and with viewport height), instead of filling the monitor. That keeps the camera from revealing the entire map width on large screens and reduces pixels drawn per frame. **Touch** devices still use the full-screen **GBA-style shell** with an on-screen D-pad.
+
+A **Studio Leo** credit (`a project by studio leo`) sits below the game frame on desktop and mobile.
 
 ### Intro tutorial
 
@@ -60,7 +62,9 @@ A `requestAnimationFrame` loop calls `render()` each frame, which paints layers 
 11. Tall decor drawn after the player when they stand north of the prop — props and flowers keep a stable order relative to each other; only player vs tall props is dynamic
 12. Grass splashes and wind gusts
 
-**Path sign:** the board sits at **(2, 95)**. Stand on **(2, 96)**, face **up**, press **↑** (or **W**) for a Pokémon-style text box. Lines type in fully before you can advance. **Space / Enter / Z / X** or tap the box goes to the next line or closes.
+**Path signs:** stand on the tile below a board, face **up**, press **↑** (or **W**) for a Pokémon-style text box. Lines type in fully before you can advance. **Space / Enter / Z / X** or tap the box goes to the next line or closes.
+- **Twin Peaks** board at **(2, 95)** — read from **(2, 96)**
+- **Relax area** board at **(-17, 87)** — read from **(-17, 88)** (“A place to relax...”)
 
 **Telescope:** stand on the tile *above* a telescope, face **down**, and press **↓** (or **S** / tap down on the mobile shell). The panorama (`Visual_assets/view/Twinpeaks_fullview.png`) is **lazy-loaded** on first open. Pan with the viewport edges, drag, or the on-screen buttons on touch. **Esc** or **×** closes it.
 
@@ -72,7 +76,11 @@ Wind ambience is **position-based**: stronger layered wind when the player is no
 
 ### Audio
 
-Footsteps and wind ambience load on the **first user gesture** (click, tap, or key) so the initial page load stays light. Dialogue uses separate talk SFX (see intro tutorial above).
+A **volume preface** screen appears on every page load: title **Volume UP**, a short reminder to turn sound on, and an **ok** button. **No game audio plays until ok is clicked** — wind, footsteps, zone music, and talk blips all stay muted until then.
+
+After dismissal, footsteps and wind ambience start. Dialogue uses separate talk SFX (see intro tutorial above).
+
+**Zen zone music:** inside the relax-area rectangle **(-20, 85)–(-14, 89)**, `sounds/zen-music-pokemon.mp3` fades in on loop and wind ducks slightly while you are there.
 
 ### Sprites & assets
 
@@ -99,12 +107,13 @@ Visual_assets/        All raster/vector map & character art (paths via `VISUAL_A
   ledge/              Ledge PNG
   rocks/              Rock PNGs (small, medium, big)
   objects/            Telescope SVG, path board PNG, lamppost PNG, Sutro Tower PNG
+  ui/                 Volume preface icon (`Audio_Playing.svg`)
   view/               Telescope panorama PNG (full skyline)
   stair/              Stairs PNG
   vehicles/           Vehicle PNGs (bicycles, truck)
   water/              Water tile PNG
   wind/               Wind gust SVGs (small, medium, large)
-sounds/               Footsteps, wind ambience, talk blips (short + normal ×3)
+sounds/               Footsteps, wind ambience, zen zone music, talk blips (short + normal ×3)
 reference_map/        Design reference files
 map_saves/            Older published-map.json backups (V1–V4)
 ```
@@ -140,7 +149,7 @@ http://localhost:5173/?devMap
 
 This shows a toolbar with a **Cell** dropdown, **Angle** selector, **Undo**, and **Export** button. Shift+click paints tiles (including **Terrain → Flowers**, **Objects → Board / Lamppost**, etc.); Ctrl/Cmd+click selects regions for copy/paste. Edits are saved to `localStorage` automatically.
 
-Use **Export map** to download a `published-map.json` that you can commit to the repo — that file is what visitors see when the site is deployed.
+Use **Export map** to download a `published-map.json` that you can commit to the repo — that file is what visitors see when the site is deployed. **Dev-mode paints live in `localStorage` only** until you export and commit; production never reads your browser’s local edits.
 
 ## Deployment
 
