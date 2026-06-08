@@ -240,9 +240,10 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           return;
         }
         const moveDir = movementKeyDir(e.key);
-        if (moveDir === "up" && playerCanReadBoardSign()) {
+        const readableBoardSign = getReadableBoardSign();
+        if (moveDir === "up" && readableBoardSign) {
           e.preventDefault();
-          openMessageBox(BOARD_SIGN_MESSAGE);
+          openMessageBox(readableBoardSign.message);
           return;
         }
         if (moveDir === "down" && playerCanUseTelescope()) {
@@ -1112,9 +1113,30 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         return "center";
       }
 
-      const BOARD_PATH_SIGN_TILE = { tx: 2, ty: 95 };
-      const BOARD_SIGN_READ_TILE = { tx: 2, ty: 96 };
-      const BOARD_SIGN_MESSAGE = "Twin Peaks. All the way up. Very windy.";
+      const BOARD_SIGNS = [
+        {
+          boardTile: { tx: 2, ty: 95 },
+          readTile: { tx: 2, ty: 96 },
+          message: "Twin Peaks. All the way up. Very windy.",
+        },
+        {
+          boardTile: { tx: -17, ty: 87 },
+          readTile: { tx: -17, ty: 88 },
+          message: "A place to relax...",
+        },
+      ];
+
+      /** Relax-area BGM: rectangle (-20,85)–(-14,89), inclusive. */
+      const ZEN_MUSIC_ZONE = { minTx: -20, maxTx: -14, minTy: 85, maxTy: 89 };
+
+      function isPlayerInZenMusicZone() {
+        return (
+          player.tileX >= ZEN_MUSIC_ZONE.minTx &&
+          player.tileX <= ZEN_MUSIC_ZONE.maxTx &&
+          player.tileY >= ZEN_MUSIC_ZONE.minTy &&
+          player.tileY <= ZEN_MUSIC_ZONE.maxTy
+        );
+      }
 
       /** Forced intro: player stops at (2,99); NPC walks in from (-12,99) (just west of desktop frame). */
       const TUTORIAL_TRIGGER_TX = 2;
@@ -1395,10 +1417,12 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         ctx.restore();
       }
 
-      function ensureBoardPathSignPlaced() {
-        const { tx, ty } = BOARD_PATH_SIGN_TILE;
-        if (!tileInWorldBounds(tx, ty)) return;
-        decorOverlays[`${tx},${ty}`] = T_BOARD;
+      function ensureBoardSignsPlaced() {
+        for (const { boardTile } of BOARD_SIGNS) {
+          const { tx, ty } = boardTile;
+          if (!tileInWorldBounds(tx, ty)) continue;
+          decorOverlays[`${tx},${ty}`] = T_BOARD;
+        }
       }
 
       const LAMPPOST_TILES = [
@@ -1475,7 +1499,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         clearThenAssign(pathArt, bundle.path);
         clearThenAssign(fenceOverlays, bundle.fence);
         clearThenAssign(decorOverlays, bundle.decor);
-        ensureBoardPathSignPlaced();
+        ensureBoardSignsPlaced();
         ensureLamppostsPlaced();
         ensureSutroTowerPlaced();
       }
@@ -2022,14 +2046,17 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const messageBoxTextEl = document.getElementById("message-box-text");
       const messageBoxArrowEl = document.getElementById("message-box-arrow");
 
-      function playerCanReadBoardSign() {
-        if (messageBoxOpen || telescopeViewOpen || !map) return false;
-        if (player.moveT < 1) return false;
-        if (player.dir !== "up") return false;
-        const { tx, ty } = BOARD_SIGN_READ_TILE;
-        if (player.tileX !== tx || player.tileY !== ty) return false;
-        const { tx: bx, ty: by } = BOARD_PATH_SIGN_TILE;
-        return decorOverlays[`${bx},${by}`] === T_BOARD;
+      function getReadableBoardSign() {
+        if (messageBoxOpen || telescopeViewOpen || !map) return null;
+        if (player.moveT < 1) return null;
+        if (player.dir !== "up") return null;
+        for (const sign of BOARD_SIGNS) {
+          const { tx, ty } = sign.readTile;
+          if (player.tileX !== tx || player.tileY !== ty) continue;
+          const { tx: bx, ty: by } = sign.boardTile;
+          if (decorOverlays[`${bx},${by}`] === T_BOARD) return sign;
+        }
+        return null;
       }
 
       function openMessageBox(text, opts) {
@@ -2306,6 +2333,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
           .then(() => {
             windAmbienceAudio.src = "sounds/wind_normal.mp3";
             windStrongAmbienceAudio.src = "sounds/wind_strong.mp3";
+            zenZoneMusicAudio.src = "sounds/zen-music-pokemon.mp3";
             gameAudioAssetsLoaded = true;
           })
           .catch(() => {
@@ -2354,14 +2382,25 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       windStrongAmbienceAudio.loop = true;
       windStrongAmbienceAudio.preload = "none";
       windStrongAmbienceAudio.volume = 0;
-      [windAmbienceAudio, windStrongAmbienceAudio].forEach((a) => {
+      const zenZoneMusicAudio = new Audio();
+      zenZoneMusicAudio.loop = true;
+      zenZoneMusicAudio.preload = "none";
+      zenZoneMusicAudio.volume = 0;
+      [windAmbienceAudio, windStrongAmbienceAudio, zenZoneMusicAudio].forEach((a) => {
         a.setAttribute("playsinline", "");
         a.setAttribute("webkit-playsinline", "");
       });
       const WIND_STRONG_MAX_VOL = 0.22 * UI.audioMult;
       const WIND_STRONG_FADE_SEC = 1.2;
       const WIND_STRONG_FADE_SPEED = WIND_STRONG_MAX_VOL / WIND_STRONG_FADE_SEC;
+      const WIND_BASE_VOL = 0.28 * UI.audioMult;
+      const ZEN_MUSIC_MAX_VOL = 0.45 * UI.audioMult;
+      const ZEN_MUSIC_FADE_SEC = 1.2;
+      const ZEN_MUSIC_FADE_SPEED = ZEN_MUSIC_MAX_VOL / ZEN_MUSIC_FADE_SEC;
+      const ZEN_ZONE_WIND_DUCK_MULT = 0.2;
       let windStrongAmbiencePlaying = false;
+      let zenZoneMusicPlaying = false;
+      let zenZoneMusicVol = 0;
       let windStrongAudioGraphReady = false;
       let windStrongGainNode = null;
       let windAmbienceGestureSeen = false;
@@ -2407,6 +2446,40 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         windStrongAmbiencePlaying = false;
       }
 
+      function applyWindBaseVolumeForZenDuck() {
+        const zenNorm = ZEN_MUSIC_MAX_VOL > 0 ? zenZoneMusicVol / ZEN_MUSIC_MAX_VOL : 0;
+        const duck = 1 - zenNorm * (1 - ZEN_ZONE_WIND_DUCK_MULT);
+        windAmbienceAudio.volume = WIND_BASE_VOL * duck;
+      }
+
+      function pauseZenZoneMusic() {
+        zenZoneMusicAudio.pause();
+        zenZoneMusicAudio.currentTime = 0;
+        zenZoneMusicAudio.volume = 0;
+        zenZoneMusicVol = 0;
+        zenZoneMusicPlaying = false;
+        applyWindBaseVolumeForZenDuck();
+      }
+
+      function updateZenZoneMusicAudio(dt) {
+        if (!windAmbienceGestureSeen) return;
+        const target = isPlayerInZenMusicZone() ? ZEN_MUSIC_MAX_VOL : 0;
+        if (zenZoneMusicVol < target) {
+          zenZoneMusicVol = Math.min(target, zenZoneMusicVol + ZEN_MUSIC_FADE_SPEED * dt);
+        } else if (zenZoneMusicVol > target) {
+          zenZoneMusicVol = Math.max(target, zenZoneMusicVol - ZEN_MUSIC_FADE_SPEED * dt);
+        }
+        zenZoneMusicAudio.volume = zenZoneMusicVol;
+        applyWindBaseVolumeForZenDuck();
+        if (target > 0 && !zenZoneMusicPlaying && gameAudioAssetsLoaded && zenZoneMusicAudio.src) {
+          zenZoneMusicAudio.play().catch(() => {});
+          zenZoneMusicPlaying = true;
+        }
+        if (zenZoneMusicVol <= 0.001 && target === 0 && zenZoneMusicPlaying) {
+          pauseZenZoneMusic();
+        }
+      }
+
       function updateWindStrongAmbienceAudio(dt) {
         if (!windAmbienceGestureSeen) return;
         ensureWindStrongAudioGraph();
@@ -2447,6 +2520,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
             windStrongAmbienceAudio.play().catch(() => {});
             windStrongAmbiencePlaying = true;
           }
+          updateZenZoneMusicAudio(0);
           return;
         }
         windAmbienceGestureSeen = true;
@@ -2454,6 +2528,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         if (gameAudioAssetsLoaded) tryStartWindAmbience();
         syncWindModeFromPlayer();
         updateWindStrongAmbienceAudio(0);
+        updateZenZoneMusicAudio(0);
         removeAudioUnlockListeners();
       }
 
@@ -2473,12 +2548,14 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
               windStrongAmbiencePlaying = true;
             }
             updateWindStrongAmbienceAudio(0);
+            updateZenZoneMusicAudio(0);
           })
           .catch(() => {});
       }
       /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
       function suspendGameAudioWhenLeavingPage() {
         windAmbienceAudio.pause();
+        if (zenZoneMusicPlaying) pauseZenZoneMusic();
         if (windStrongAmbiencePlaying) pauseStrongWindAmbience();
         else setStrongWindGain(0);
         if (sfxStepCtx && sfxStepCtx.state !== "closed") {
@@ -4165,8 +4242,9 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
 
         // Start a new tile-step if idle and any direction is pressed.
         if (!isMoving) {
-          if (input.up && playerCanReadBoardSign()) {
-            openMessageBox(BOARD_SIGN_MESSAGE);
+          const readableBoardSign = getReadableBoardSign();
+          if (input.up && readableBoardSign) {
+            openMessageBox(readableBoardSign.message);
             input.up = false;
           } else if (input.down && playerCanUseTelescope()) {
             openTelescopeView();
@@ -4257,6 +4335,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
 
         syncWindModeFromPlayer();
         updateWindStrongAmbienceAudio(dt);
+        updateZenZoneMusicAudio(dt);
 
         if (worldTime >= windNextGustWorldTime) {
           if (windMode === "normal") {

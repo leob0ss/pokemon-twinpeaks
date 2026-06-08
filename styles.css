@@ -13,20 +13,60 @@
         image-rendering: pixelated;
       }
 
-      /* Desktop: fixed game window (camera + culling follow this box, not the full monitor). */
+      .project-credit {
+        margin: 0;
+        width: 100%;
+        font-size: 14px;
+        line-height: 1.4;
+        letter-spacing: 0.02em;
+        text-align: right;
+      }
+      .project-credit a {
+        color: inherit;
+        font-weight: 600;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .project-credit a:hover {
+        opacity: 0.85;
+      }
+      .project-credit--mobile {
+        display: none;
+      }
+
+      /* Desktop: responsive 16:9 game window (camera + culling follow this box). */
       @media (pointer: fine) {
-        #game-stage {
+        #desktop-game-wrap {
+          --game-frame-min: 560px;
+          --game-frame-max: 880px;
+          --game-credit-space: 52px;
           position: fixed;
           left: 50%;
           top: 50%;
           transform: translate(-50%, -50%);
-          width: min(960px, 100vw);
-          height: min(540px, 100vh);
           z-index: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          width: clamp(
+            var(--game-frame-min),
+            min(90vw, calc((100vh - var(--game-credit-space)) * 16 / 9)),
+            var(--game-frame-max)
+          );
+          max-height: 100vh;
+        }
+        #game-stage {
+          position: relative;
+          width: 100%;
+          aspect-ratio: 16 / 9;
           box-shadow:
             0 0 0 4px #3a9a88,
             0 0 0 8px #2a7a6a,
             0 16px 48px rgba(0, 0, 0, 0.22);
+        }
+        .project-credit--desktop {
+          margin-top: 28px;
+          color: #1f5c52;
         }
         #game-frame {
           position: absolute;
@@ -54,6 +94,21 @@
 
       /* Mobile: stage wrapper is layout-transparent; canvas moves into GBA shell via JS. */
       @media (pointer: coarse) {
+        #desktop-game-wrap {
+          display: contents;
+        }
+        .project-credit--desktop {
+          display: none;
+        }
+        .project-credit--mobile {
+          display: block;
+          flex-shrink: 0;
+          margin: 20px 0 0;
+          /* Match canvas inset: .gba-screen-area padding + .gba-screen-bezel padding */
+          padding: 0 calc(12px + 4px);
+          box-sizing: border-box;
+          color: rgba(255, 255, 255, 0.78);
+        }
         #game-stage {
           display: contents;
         }
