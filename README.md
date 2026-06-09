@@ -76,9 +76,9 @@ Wind ambience is **position-based**: stronger layered wind when the player is no
 
 ### Audio
 
-A **volume preface** screen appears on every page load: title **Volume UP**, a short reminder to turn sound on, and an **ok** button. **No game audio plays until ok is clicked** — wind, footsteps, zone music, and talk blips all stay muted until then.
+A **volume preface** lives on **`start.html`**: title **Volume UP**, a short reminder to turn sound on, and an **ok** button that opens the game. Visiting **`index.html`** redirects to `start.html` first (each refresh shows the preface again). **`index.html?devMap`** skips the preface for the map editor.
 
-After dismissal, footsteps and wind ambience start. Dialogue uses separate talk SFX (see intro tutorial above).
+On the game page, wind, footsteps, zone music, and talk blips stay muted until the first tap or key press (required by mobile browsers for audio). Dialogue uses separate talk SFX (see intro tutorial above).
 
 **Zen zone music:** inside the relax-area rectangle **(-20, 85)–(-14, 89)**, `sounds/zen-music-pokemon.mp3` fades in on loop and wind ducks slightly while you are there.
 
@@ -89,7 +89,9 @@ Character sprites are pre-exported PNGs (4 steps × 4 directions). Terrain tiles
 ## Project structure
 
 ```
-index.html            HTML shell + canvas; links styles.css and main.js
+start.html            Volume preface (entry screen before the game)
+start.css             Styles for the volume preface page only
+index.html            Game shell + canvas; links styles.css and main.js
 main.js               Game loop, map, rendering, audio, persistence
 js/ui-env.js          `UI` getters: coarse pointer, camera zoom, mobile audio multiplier
 js/editor.js          Map editor UI + wiring (loaded only with `?devMap`)

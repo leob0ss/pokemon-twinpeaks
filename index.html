@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <!-- Canonical + social base URL: production site on Vercel. -->
     <link rel="canonical" href="https://pokemon-twinpeaks.vercel.app/" />
     <title>Climb Twin Peaks, SF</title>
@@ -45,21 +45,20 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="styles.css" />
+    <script>
+      (function () {
+        try {
+          if (new URLSearchParams(location.search).has("devMap")) return;
+          if (!sessionStorage.getItem("twinpeaks_enter_game")) {
+            location.replace("start.html");
+            return;
+          }
+          sessionStorage.removeItem("twinpeaks_enter_game");
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
-    <div id="volume-preface-overlay" role="dialog" aria-labelledby="volume-preface-title" aria-modal="true">
-      <img
-        class="volume-preface-icon"
-        src="Visual_assets/ui/Audio_Playing.svg"
-        alt=""
-        width="96"
-        height="96"
-        draggable="false"
-      />
-      <h1 id="volume-preface-title" class="volume-preface-title">Volume UP</h1>
-      <p class="volume-preface-text">Turn your volume ON to fully experience this website</p>
-      <button type="button" id="volume-preface-ok" class="volume-preface-ok">ok</button>
-    </div>
     <div id="desktop-game-wrap">
       <div id="game-stage">
         <div id="game-frame">

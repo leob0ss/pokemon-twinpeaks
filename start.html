@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Volume UP · Climb Twin Peaks, SF</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="stylesheet" href="start.css" />
+  </head>
+  <body>
+    <main class="start-screen">
+      <img
+        class="start-icon"
+        src="Visual_assets/ui/Audio_Playing.svg"
+        alt=""
+        width="96"
+        height="96"
+        draggable="false"
+      />
+      <h1 class="start-title">Volume UP</h1>
+      <p class="start-text">Turn your volume ON to fully experience this website</p>
+      <button type="button" class="start-ok" id="start-ok">ok</button>
+    </main>
+    <script>
+      (function () {
+        var ENTER_KEY = "twinpeaks_enter_game";
+        var ok = document.getElementById("start-ok");
+        if (!ok) return;
+        function enterGame() {
+          try {
+            sessionStorage.setItem(ENTER_KEY, "1");
+          } catch (_) {}
+          location.replace("index.html");
+        }
+        ok.addEventListener("click", enterGame);
+      })();
+    </script>
+  </body>
+</html>

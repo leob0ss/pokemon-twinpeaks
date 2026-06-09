@@ -1439,7 +1439,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         }
       }
 
-      const SUTRO_TOWER_TILE = { tx: 36, ty: 52 };
+      const SUTRO_TOWER_TILE = { tx: 34, ty: 52 };
       const SUTRO_TOWER_DRAW_SCALE = 0.5;
 
       function ensureSutroTowerPlaced() {
@@ -2335,6 +2335,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
             windStrongAmbienceAudio.src = "sounds/wind_strong.mp3";
             zenZoneMusicAudio.src = "sounds/zen-music-pokemon.mp3";
             gameAudioAssetsLoaded = true;
+            if (windAmbienceGestureSeen) tryPrimeZenZoneMusic();
           })
           .catch(() => {
             gameAudioAssetsLoadPromise = null;
@@ -2348,7 +2349,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       const SFX_TALK_VOL = 0.55 * UI.audioMult;
 
       function playSfxBuffer(buffer, volume) {
-        if (!buffer || !volumePrefaceDismissed) return;
+        if (!buffer || !windAmbienceGestureSeen) return;
         resumeSfxContext();
         const source = sfxStepCtx.createBufferSource();
         source.buffer = buffer;
@@ -2403,8 +2404,11 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       let zenZoneMusicVol = 0;
       let windStrongAudioGraphReady = false;
       let windStrongGainNode = null;
+      let zenZoneMusicAudioGraphReady = false;
+      let zenZoneMusicGainNode = null;
+      let zenZoneMusicPrimed = false;
+      let zenZoneMusicPriming = false;
       let windAmbienceGestureSeen = false;
-      let volumePrefaceDismissed = false;
       let audioUnlockListenersRemoved = false;
       const _audioUnlockCap = { capture: true, passive: true };
       function tryStartWindAmbience() {
@@ -2447,33 +2451,90 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
         windStrongAmbiencePlaying = false;
       }
 
+      /** iOS Safari blocks play() outside a user gesture; prime zen during unlock at gain 0. */
+      function ensureZenZoneMusicAudioGraph() {
+        if (zenZoneMusicAudioGraphReady || !gameAudioAssetsLoaded || !zenZoneMusicAudio.src) return;
+        resumeSfxContext();
+        if (sfxStepCtx.state !== "running") return;
+        try {
+          const src = sfxStepCtx.createMediaElementSource(zenZoneMusicAudio);
+          zenZoneMusicGainNode = sfxStepCtx.createGain();
+          zenZoneMusicGainNode.gain.value = 0;
+          src.connect(zenZoneMusicGainNode);
+          zenZoneMusicGainNode.connect(sfxStepCtx.destination);
+          zenZoneMusicAudio.volume = 1;
+          zenZoneMusicAudioGraphReady = true;
+        } catch {
+          zenZoneMusicAudioGraphReady = false;
+          zenZoneMusicGainNode = null;
+        }
+      }
+
+      function getZenZoneMusicGain() {
+        return zenZoneMusicGainNode ? zenZoneMusicGainNode.gain.value : zenZoneMusicAudio.volume;
+      }
+
+      function setZenZoneMusicGain(v) {
+        if (zenZoneMusicGainNode) zenZoneMusicGainNode.gain.value = v;
+        else zenZoneMusicAudio.volume = v;
+      }
+
+      function tryPrimeZenZoneMusic() {
+        if (zenZoneMusicPrimed || zenZoneMusicPriming || !windAmbienceGestureSeen) return;
+        if (!gameAudioAssetsLoaded || !zenZoneMusicAudio.src) return;
+        ensureZenZoneMusicAudioGraph();
+        setZenZoneMusicGain(0);
+        zenZoneMusicVol = 0;
+        zenZoneMusicPriming = true;
+        const playPromise = zenZoneMusicAudio.play();
+        if (playPromise && typeof playPromise.then === "function") {
+          playPromise
+            .then(() => {
+              zenZoneMusicPrimed = true;
+              zenZoneMusicPriming = false;
+            })
+            .catch(() => {
+              zenZoneMusicPriming = false;
+            });
+        } else {
+          zenZoneMusicPrimed = true;
+          zenZoneMusicPriming = false;
+        }
+      }
+
       function applyWindBaseVolumeForZenDuck() {
         const zenNorm = ZEN_MUSIC_MAX_VOL > 0 ? zenZoneMusicVol / ZEN_MUSIC_MAX_VOL : 0;
         const duck = 1 - zenNorm * (1 - ZEN_ZONE_WIND_DUCK_MULT);
         windAmbienceAudio.volume = WIND_BASE_VOL * duck;
       }
 
-      function pauseZenZoneMusic() {
-        zenZoneMusicAudio.pause();
-        zenZoneMusicAudio.currentTime = 0;
-        zenZoneMusicAudio.volume = 0;
+      function pauseZenZoneMusic({ hard = false } = {}) {
+        setZenZoneMusicGain(0);
         zenZoneMusicVol = 0;
         zenZoneMusicPlaying = false;
         applyWindBaseVolumeForZenDuck();
+        if (hard) {
+          zenZoneMusicAudio.pause();
+          zenZoneMusicAudio.currentTime = 0;
+          zenZoneMusicPrimed = false;
+          zenZoneMusicPriming = false;
+        }
       }
 
       function updateZenZoneMusicAudio(dt) {
         if (!windAmbienceGestureSeen) return;
+        if (!zenZoneMusicPrimed && gameAudioAssetsLoaded && zenZoneMusicAudio.src) {
+          tryPrimeZenZoneMusic();
+        }
         const target = isPlayerInZenMusicZone() ? ZEN_MUSIC_MAX_VOL : 0;
         if (zenZoneMusicVol < target) {
           zenZoneMusicVol = Math.min(target, zenZoneMusicVol + ZEN_MUSIC_FADE_SPEED * dt);
         } else if (zenZoneMusicVol > target) {
           zenZoneMusicVol = Math.max(target, zenZoneMusicVol - ZEN_MUSIC_FADE_SPEED * dt);
         }
-        zenZoneMusicAudio.volume = zenZoneMusicVol;
+        setZenZoneMusicGain(zenZoneMusicVol);
         applyWindBaseVolumeForZenDuck();
-        if (target > 0 && !zenZoneMusicPlaying && gameAudioAssetsLoaded && zenZoneMusicAudio.src) {
-          zenZoneMusicAudio.play().catch(() => {});
+        if (target > 0 && zenZoneMusicPrimed) {
           zenZoneMusicPlaying = true;
         }
         if (zenZoneMusicVol <= 0.001 && target === 0 && zenZoneMusicPlaying) {
@@ -2521,12 +2582,16 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
             windStrongAmbienceAudio.play().catch(() => {});
             windStrongAmbiencePlaying = true;
           }
+          tryPrimeZenZoneMusic();
           updateZenZoneMusicAudio(0);
           return;
         }
         windAmbienceGestureSeen = true;
         resumeSfxContext();
-        if (gameAudioAssetsLoaded) tryStartWindAmbience();
+        if (gameAudioAssetsLoaded) {
+          tryStartWindAmbience();
+          tryPrimeZenZoneMusic();
+        }
         syncWindModeFromPlayer();
         updateWindStrongAmbienceAudio(0);
         updateZenZoneMusicAudio(0);
@@ -2534,28 +2599,8 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       }
 
       function unlockGameAudioFromUserGesture() {
-        if (!volumePrefaceDismissed) return;
         loadGameAudioAssets().then(startGameAudioAfterUnlock).catch(startGameAudioAfterUnlock);
       }
-
-      function initVolumePreface() {
-        const overlay = document.getElementById("volume-preface-overlay");
-        const okBtn = document.getElementById("volume-preface-ok");
-        if (!overlay || !okBtn) {
-          volumePrefaceDismissed = true;
-          return;
-        }
-
-        overlay.setAttribute("aria-hidden", "false");
-        okBtn.addEventListener("click", () => {
-          volumePrefaceDismissed = true;
-          overlay.classList.add("volume-preface--hidden");
-          overlay.setAttribute("aria-hidden", "true");
-          unlockGameAudioFromUserGesture();
-        });
-      }
-
-      initVolumePreface();
 
       function reviveAmbienceAfterBackground() {
         if (!windAmbienceGestureSeen) return;
@@ -2564,6 +2609,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
             syncWindModeFromPlayer();
             resumeSfxContext();
             tryStartWindAmbience();
+            tryPrimeZenZoneMusic();
             if (windMode === "windy") {
               windStrongAmbienceAudio.play().catch(() => {});
               windStrongAmbiencePlaying = true;
@@ -2576,7 +2622,7 @@ const VISUAL_ASSETS_ROOT = "Visual_assets";
       /** Pause wind loops and suspend SFX when the tab/window is hidden or the page is going away. */
       function suspendGameAudioWhenLeavingPage() {
         windAmbienceAudio.pause();
-        if (zenZoneMusicPlaying) pauseZenZoneMusic();
+        if (zenZoneMusicPlaying || zenZoneMusicPrimed) pauseZenZoneMusic({ hard: true });
         if (windStrongAmbiencePlaying) pauseStrongWindAmbience();
         else setStrongWindGain(0);
         if (sfxStepCtx && sfxStepCtx.state !== "closed") {
